@@ -1,6 +1,6 @@
 package launcher.mc;
 
-import launcher.auth.ElyAuth;
+import launcher.auth.GameSession;
 
 import java.nio.file.*;
 import java.util.*;
@@ -11,11 +11,11 @@ public class GameLauncher {
     private static final String AUTH_SERVER = "https://account.ely.by/api/authlib-injector";
     private static final Path GAME_ROOT = Path.of("D:\\wormlauncher");
 
-    public static Process launch(ElyAuth.Session session, String versionId) throws Exception {
+    public static Process launch(GameSession session, String versionId) throws Exception {
         return launch(session, versionId, p -> {});
     }
 
-    public static Process launch(ElyAuth.Session session, String versionId, DoubleConsumer progress) throws Exception {
+    public static Process launch(GameSession session, String versionId, DoubleConsumer progress) throws Exception {
         Path gameDir = GAME_ROOT.resolve("game");
         Path clientJar = gameDir.resolve("versions").resolve(versionId).resolve(versionId + ".jar");
 
@@ -54,7 +54,13 @@ public class GameLauncher {
         cmd.add("-Djava.library.path=" + natives.toAbsolutePath());
         if (Files.exists(logCfg))
             cmd.add("-Dlog4j.configurationFile=" + logCfg.toAbsolutePath());
-        cmd.add("-javaagent:" + authlib.toAbsolutePath() + "=" + AUTH_SERVER);
+
+        // authlib-injector только для Ely.by; для Mojang — не подключаем,
+        // иначе он перенаправит auth на Ely.by и Mojang-сессия не пройдёт.
+        if (session.isEly()) {
+            cmd.add("-javaagent:" + authlib.toAbsolutePath() + "=" + AUTH_SERVER);
+        }
+
         cmd.add("-cp");
         cmd.add(classpath);
         cmd.add(vj.mainClass);
@@ -64,7 +70,7 @@ public class GameLauncher {
         cmd.add("--accessToken"); cmd.add(session.accessToken());
         cmd.add("--clientId");    cmd.add("");
         cmd.add("--xuid");        cmd.add("");
-        cmd.add("--userType");    cmd.add("mojang");
+        cmd.add("--userType");    cmd.add(session.userType());
         cmd.add("--versionType"); cmd.add("release");
         cmd.add("--version");     cmd.add(vj.id);
         cmd.add("--gameDir");     cmd.add(gameDir.toAbsolutePath().toString());

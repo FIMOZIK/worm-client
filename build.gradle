@@ -4,15 +4,6 @@ plugins {
     id 'org.openjfx.javafxplugin' version '0.1.0'
 }
 
-javafx {
-    version = '21'
-    modules = ['javafx.controls', 'javafx.fxml', 'javafx.web']
-}
-
-application {
-    mainClass = 'launcher.LauncherApp'
-}
-
 group = 'launcher'
 version = '1.0.0'
 
@@ -28,7 +19,7 @@ javafx {
 }
 
 application {
-    mainClass = 'launcher.Launch'
+    mainClass = 'launcher.LauncherApp'
 }
 
 repositories {
@@ -37,6 +28,7 @@ repositories {
 
 dependencies {
     implementation 'com.google.code.gson:gson:2.11.0'
+    implementation 'net.java.dev.jna:jna:5.13.0'
 }
 
 tasks.withType(JavaCompile) {

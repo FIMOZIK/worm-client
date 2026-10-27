@@ -9,15 +9,15 @@ public class TokenStore {
     private static final Path FILE = Path.of("D:\\wormlauncher", "session.json");
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 
-    public static void save(ElyAuth.Session s) throws Exception {
+    public static void save(GameSession s) throws Exception {
         Files.createDirectories(FILE.getParent());
         Files.writeString(FILE, GSON.toJson(s), StandardCharsets.UTF_8);
     }
 
-    public static ElyAuth.Session load() {
+    public static GameSession load() {
         try {
             if (!Files.exists(FILE)) return null;
-            return GSON.fromJson(Files.readString(FILE), ElyAuth.Session.class);
+            return GSON.fromJson(Files.readString(FILE), GameSession.class);
         } catch (Exception e) {
             return null;
         }

@@ -18,8 +18,9 @@ public class VersionManifest {
 
     private static List<Entry> cache = null;
 
-    /** Кеш fabric-лоадеров по mc-версии, чтобы UI не дёргал сеть на каждый клик. */
     private static final Map<String, List<String>> FABRIC_CACHE = new HashMap<>();
+    private static final Map<String, List<String>> FORGE_CACHE  = new HashMap<>();
+    private static final Map<String, List<String>> QUILT_CACHE  = new HashMap<>();
 
     public static List<Entry> fetch() throws Exception {
         if (cache != null) return cache;
@@ -59,12 +60,27 @@ public class VersionManifest {
         return out;
     }
 
-    /** Обёртка для UI: список fabric-лоадеров под конкретную mc-версию (с кешем). */
     public static synchronized List<String> fetchFabricLoaders(String mcVersion) throws Exception {
         List<String> cached = FABRIC_CACHE.get(mcVersion);
         if (cached != null) return cached;
         List<String> fetched = FabricInstaller.fetchLoaders(mcVersion);
         FABRIC_CACHE.put(mcVersion, fetched);
+        return fetched;
+    }
+
+    public static synchronized List<String> fetchForgeVersions(String mcVersion) throws Exception {
+        List<String> cached = FORGE_CACHE.get(mcVersion);
+        if (cached != null) return cached;
+        List<String> fetched = ForgeInstaller.fetchForgeVersions(mcVersion);
+        FORGE_CACHE.put(mcVersion, fetched);
+        return fetched;
+    }
+
+    public static synchronized List<String> fetchQuiltLoaders(String mcVersion) throws Exception {
+        List<String> cached = QUILT_CACHE.get(mcVersion);
+        if (cached != null) return cached;
+        List<String> fetched = QuiltInstaller.fetchLoaders(mcVersion);
+        QUILT_CACHE.put(mcVersion, fetched);
         return fetched;
     }
 }

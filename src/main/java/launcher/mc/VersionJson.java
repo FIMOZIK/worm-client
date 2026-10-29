@@ -25,10 +25,13 @@ public class VersionJson {
     public final Download client;
     public final Download loggingClient;
     public final List<Library> libraries;
+    public final List<String> gameArguments;
+    public final List<String> jvmArguments;
 
     private VersionJson(String id, String inheritsFrom, String jarVersionId, String mainClass,
                         String assetIndexUrl, String assetIndexSha1, String assetIndexId,
-                        Download client, Download loggingClient, List<Library> libraries) {
+                        Download client, Download loggingClient, List<Library> libraries,
+                        List<String> gameArguments, List<String> jvmArguments) {
         this.id = id;
         this.inheritsFrom = inheritsFrom;
         this.jarVersionId = jarVersionId;
@@ -39,6 +42,8 @@ public class VersionJson {
         this.client = client;
         this.loggingClient = loggingClient;
         this.libraries = libraries;
+        this.gameArguments = gameArguments;
+        this.jvmArguments = jvmArguments;
     }
 
     public static Path jsonPath(Path gameDir, String versionId) {
@@ -122,16 +127,32 @@ public class VersionJson {
             target.add("libraries", combined);
         }
 
-        for (String k : new String[]{"arguments", "minecraftArguments"}) {
-            if (src.has(k) && !target.has(k)) target.add(k, src.get(k));
+        // Аргументы: склеиваем родительские и дочерние (ваниль + Forge/Fabric).
+        if (src.has("arguments")) {
+            JsonObject srcArgs = src.getAsJsonObject("arguments");
+            JsonObject targetArgs;
+            if (target.has("arguments")) {
+                targetArgs = target.getAsJsonObject("arguments");
+            } else {
+                targetArgs = new JsonObject();
+                target.add("arguments", targetArgs);
+            }
+            for (String key : new String[]{"game", "jvm"}) {
+                JsonArray combined = new JsonArray();
+                if (targetArgs.has(key)) {
+                    for (JsonElement e : targetArgs.getAsJsonArray(key)) combined.add(e);
+                }
+                if (srcArgs.has(key)) {
+                    for (JsonElement e : srcArgs.getAsJsonArray(key)) combined.add(e);
+                }
+                targetArgs.add(key, combined);
+            }
+        }
+        if (src.has("minecraftArguments") && !target.has("minecraftArguments")) {
+            target.add("minecraftArguments", src.get("minecraftArguments"));
         }
     }
 
-    /**
-     * Ключ для дедупа — ПОЛНОЕ maven-имя с classifier.
-     * Иначе natives-windows-x86 вытесняет основной lwjgl-glfw из merge
-     * и MC падает с NoClassDefFoundError: org/lwjgl/.../CallbackI.
-     */
     private static String libKey(JsonObject lib) {
         return lib.has("name") ? lib.get("name").getAsString() : "";
     }
@@ -225,7 +246,60 @@ public class VersionJson {
             }
         }
 
+        List<String> gameArgs = new ArrayList<>();
+        List<String> jvmArgs = new ArrayList<>();
+        if (o.has("arguments")) {
+            JsonObject args = o.getAsJsonObject("arguments");
+            if (args.has("game")) {
+                for (JsonElement e : args.getAsJsonArray("game")) {
+                    addArg(gameArgs, e);
+                }
+            }
+            if (args.has("jvm")) {
+                for (JsonElement e : args.getAsJsonArray("jvm")) {
+                    addArg(jvmArgs, e);
+                }
+            }
+        }
+        if (o.has("minecraftArguments")) {
+            String legacy = o.get("minecraftArguments").getAsString();
+            for (String s : legacy.split(" ")) {
+                if (!s.isEmpty()) gameArgs.add(s);
+            }
+        }
+
         return new VersionJson(id, inheritsFrom, jarVersionId, mainClass,
-                assetIndexUrl, assetIndexSha1, assetIndexId, client, lc, libs);
+                assetIndexUrl, assetIndexSha1, assetIndexId, client, lc, libs,
+                gameArgs, jvmArgs);
+    }
+
+    private static void addArg(List<String> out, JsonElement e) {
+        if (e.isJsonPrimitive()) {
+            out.add(e.getAsString());
+            return;
+        }
+        if (!e.isJsonObject()) return;
+        JsonObject obj = e.getAsJsonObject();
+        if (obj.has("rules")) {
+            for (JsonElement r : obj.getAsJsonArray("rules")) {
+                JsonObject rule = r.getAsJsonObject();
+                if (rule.has("features")) return; // пропускаем аргументы, завязанные на фичи
+                if (rule.has("os")) {
+                    String osName = rule.getAsJsonObject("os").has("name")
+                            ? rule.getAsJsonObject("os").get("name").getAsString() : null;
+                    if (osName != null && !osName.equals("windows")) return;
+                }
+            }
+        }
+        if (obj.has("value")) {
+            JsonElement v = obj.get("value");
+            if (v.isJsonArray()) {
+                for (JsonElement ve : v.getAsJsonArray()) {
+                    if (ve.isJsonPrimitive()) out.add(ve.getAsString());
+                }
+            } else if (v.isJsonPrimitive()) {
+                out.add(v.getAsString());
+            }
+        }
     }
 }

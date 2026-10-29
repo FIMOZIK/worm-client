@@ -25,7 +25,9 @@ import launcher.auth.GameSession;
 import launcher.auth.MojangAuth;
 import launcher.auth.TokenStore;
 import launcher.mc.FabricInstaller;
+import launcher.mc.ForgeInstaller;
 import launcher.mc.GameLauncher;
+import launcher.mc.QuiltInstaller;
 import launcher.mc.VersionManifest;
 import thunder.hack.utility.discord.DiscordEventHandlers;
 import thunder.hack.utility.discord.DiscordRPC;
@@ -71,7 +73,6 @@ public class LauncherApp extends Application {
     private StackPane rootPane;
     private VBox contentHolder;
 
-    // shared controls
     private Label titleLabel;
     private Label statusLabel;
     private TextField nickField;
@@ -79,19 +80,19 @@ public class LauncherApp extends Application {
     private Button loginBtn, logoutBtn, oauthBtn, msBtn, openFolder, checkUpd, settingsBtn;
     private CheckBox minimizeBox, autoLaunchBox;
     private ComboBox<String> versionBox;
-    private ComboBox<String> loaderBox;       // Vanilla / Fabric
-    private ComboBox<String> fabricLoaderBox; // версии fabric-лоадера
+    private ComboBox<String> loaderBox;
+    private ComboBox<String> fabricLoaderBox;
+    private ComboBox<String> forgeVersionBox;
+    private ComboBox<String> quiltLoaderBox;
     private Button playBtn;
     private ProgressBar progressBar;
     private TextArea log;
 
-    // background layers
     private ImageView bgImageView;
     private MediaView bgMediaView;
     private MediaPlayer bgMediaPlayer;
     private Region tintLayer;
 
-    // discord
     private static DiscordRPC rpc;
     private static DiscordRichPresence presence;
     private static volatile boolean rpcStarted = false;
@@ -105,7 +106,6 @@ public class LauncherApp extends Application {
         initLauncherRpc();
         stage.getIcons().add(makeIcon());
 
-        // === shared controls ===
         titleLabel = new Label("worm launcher");
         titleLabel.getStyleClass().add("title-label");
 
@@ -142,7 +142,7 @@ public class LauncherApp extends Application {
         versionBox.setPromptText("загрузка версий...");
         versionBox.setDisable(true);
 
-        loaderBox = new ComboBox<>(FXCollections.observableArrayList("Vanilla", "Fabric"));
+        loaderBox = new ComboBox<>(FXCollections.observableArrayList("Vanilla", "Fabric", "Forge", "Quilt"));
         loaderBox.setValue("Vanilla");
         loaderBox.setPrefWidth(120);
 
@@ -152,6 +152,20 @@ public class LauncherApp extends Application {
         fabricLoaderBox.setDisable(true);
         fabricLoaderBox.setVisible(false);
         fabricLoaderBox.setManaged(false);
+
+        forgeVersionBox = new ComboBox<>();
+        forgeVersionBox.setPrefWidth(150);
+        forgeVersionBox.setPromptText("forge...");
+        forgeVersionBox.setDisable(true);
+        forgeVersionBox.setVisible(false);
+        forgeVersionBox.setManaged(false);
+
+        quiltLoaderBox = new ComboBox<>();
+        quiltLoaderBox.setPrefWidth(150);
+        quiltLoaderBox.setPromptText("quilt...");
+        quiltLoaderBox.setDisable(true);
+        quiltLoaderBox.setVisible(false);
+        quiltLoaderBox.setManaged(false);
 
         playBtn = new Button("Играть");
         playBtn.getStyleClass().add("play-button");
@@ -168,7 +182,6 @@ public class LauncherApp extends Application {
         log.setMaxHeight(Double.MAX_VALUE);
         log.setOpacity(cfg.logOpacity != null ? cfg.logOpacity : 1.0);
 
-        // === background layers ===
         rootPane = new StackPane();
 
         bgImageView = new ImageView();
@@ -195,7 +208,6 @@ public class LauncherApp extends Application {
 
         rootPane.getChildren().addAll(bgImageView, bgMediaView, tintLayer, contentHolder);
 
-        // === scene ===
         double w = cfg.windowWidth  != null ? cfg.windowWidth  : 860;
         double h = cfg.windowHeight != null ? cfg.windowHeight : 700;
         Scene scene = new Scene(rootPane, w, h);
@@ -232,7 +244,6 @@ public class LauncherApp extends Application {
             }
         });
 
-        // === handlers ===
         settingsBtn.setOnAction(e -> openSettings());
 
         new Thread(() -> {
@@ -257,21 +268,24 @@ public class LauncherApp extends Application {
 
         versionBox.valueProperty().addListener((obs, oldV, newV) -> {
             if (newV != null && !newV.isBlank()) { cfg.lastVersion = newV; Config.save(cfg); }
-            if ("Fabric".equals(loaderBox.getValue())) {
-                reloadFabricLoaders(newV);
-            }
+            if ("Fabric".equals(loaderBox.getValue())) reloadFabricLoaders(newV);
+            if ("Forge".equals(loaderBox.getValue()))  reloadForgeVersions(newV);
+            if ("Quilt".equals(loaderBox.getValue()))  reloadQuiltLoaders(newV);
         });
 
         loaderBox.valueProperty().addListener((obs, oldV, newV) -> {
             boolean isFabric = "Fabric".equals(newV);
-            fabricLoaderBox.setVisible(isFabric);
-            fabricLoaderBox.setManaged(isFabric);
-            if (isFabric) {
-                reloadFabricLoaders(versionBox.getValue());
-            } else {
-                fabricLoaderBox.getItems().clear();
-                fabricLoaderBox.setDisable(true);
-            }
+            boolean isForge  = "Forge".equals(newV);
+            boolean isQuilt  = "Quilt".equals(newV);
+            fabricLoaderBox.setVisible(isFabric); fabricLoaderBox.setManaged(isFabric);
+            forgeVersionBox.setVisible(isForge);  forgeVersionBox.setManaged(isForge);
+            quiltLoaderBox.setVisible(isQuilt);   quiltLoaderBox.setManaged(isQuilt);
+            if (isFabric) reloadFabricLoaders(versionBox.getValue());
+            else { fabricLoaderBox.getItems().clear(); fabricLoaderBox.setDisable(true); }
+            if (isForge) reloadForgeVersions(versionBox.getValue());
+            else { forgeVersionBox.getItems().clear(); forgeVersionBox.setDisable(true); }
+            if (isQuilt) reloadQuiltLoaders(versionBox.getValue());
+            else { quiltLoaderBox.getItems().clear(); quiltLoaderBox.setDisable(true); }
             applyLayout();
         });
 
@@ -415,17 +429,14 @@ public class LauncherApp extends Application {
         }
     }
 
-    // ============================================================
-    // LAYOUT
-    // ============================================================
-
     private void applyLayout() {
         String layout = cfg.buttonLayout == null ? "TOP" : cfg.buttonLayout;
         boolean logInSeparate = logInSeparateWindow();
 
         detachAll(titleLabel, statusLabel, nickField, passField, loginBtn, logoutBtn,
                 oauthBtn, msBtn, openFolder, checkUpd, settingsBtn,
-                minimizeBox, autoLaunchBox, versionBox, loaderBox, fabricLoaderBox,
+                minimizeBox, autoLaunchBox, versionBox, loaderBox,
+                fabricLoaderBox, forgeVersionBox, quiltLoaderBox,
                 playBtn, progressBar);
         if (!logInSeparate) detachAll(log);
 
@@ -448,7 +459,7 @@ public class LauncherApp extends Application {
 
             HBox playRow = new HBox(8,
                     new Label("версия:"), versionBox,
-                    new Label("загрузчик:"), loaderBox, fabricLoaderBox,
+                    new Label("загрузчик:"), loaderBox, fabricLoaderBox, forgeVersionBox, quiltLoaderBox,
                     playBtn, progressBar);
             playRow.setAlignment(Pos.CENTER_LEFT);
             HBox.setHgrow(versionBox, Priority.ALWAYS);
@@ -477,7 +488,7 @@ public class LauncherApp extends Application {
 
             HBox playRow = new HBox(8,
                     new Label("версия:"), versionBox,
-                    new Label("загрузчик:"), loaderBox, fabricLoaderBox,
+                    new Label("загрузчик:"), loaderBox, fabricLoaderBox, forgeVersionBox, quiltLoaderBox,
                     playBtn, progressBar);
             playRow.setAlignment(Pos.CENTER_LEFT);
             HBox.setHgrow(versionBox, Priority.ALWAYS);
@@ -507,10 +518,6 @@ public class LauncherApp extends Application {
         return w != null && w != stage;
     }
 
-    // ============================================================
-    // WINDOW MODE
-    // ============================================================
-
     private void applySavedWindowMode() {
         String mode = cfg.windowMode == null ? "WINDOWED" : cfg.windowMode;
         switch (mode) {
@@ -528,10 +535,6 @@ public class LauncherApp extends Application {
             default           -> { stage.setFullScreen(false); stage.setMaximized(false); }
         }
     }
-
-    // ============================================================
-    // BACKGROUND
-    // ============================================================
 
     private void rebuildBgLayer() {
         if (bgMediaPlayer != null) {
@@ -585,10 +588,6 @@ public class LauncherApp extends Application {
                 + (Boolean.TRUE.equals(cfg.darkMode) ? 0.35 : 0.15) + ");");
     }
 
-    // ============================================================
-    // SETTINGS
-    // ============================================================
-
     private void openSettings() {
         Stage s = new Stage();
         s.initOwner(stage);
@@ -610,7 +609,6 @@ public class LauncherApp extends Application {
         layoutCombo.setValue(cfg.buttonLayout != null ? cfg.buttonLayout : "TOP");
         layoutCombo.setPrefWidth(180);
 
-        // background
         Label bgPath = new Label(cfg.bgImagePath == null ? "не выбрано" : cfg.bgImagePath);
         bgPath.getStyleClass().add("subtitle-label");
         bgPath.setWrapText(true);
@@ -650,7 +648,6 @@ public class LauncherApp extends Application {
             rebuildBgLayer();
         });
 
-        // window mode
         ToggleGroup wmGroup = new ToggleGroup();
         RadioButton wmWindowed   = new RadioButton("Оконный");
         RadioButton wmMaximized  = new RadioButton("Развёрнутый");
@@ -667,7 +664,6 @@ public class LauncherApp extends Application {
         }
         HBox wmRow = new HBox(16, wmWindowed, wmMaximized, wmFullscreen);
 
-        // log
         CheckBox showLogBox = new CheckBox("показывать лог в главном окне");
         showLogBox.setSelected(!Boolean.FALSE.equals(cfg.showLog));
 
@@ -687,7 +683,6 @@ public class LauncherApp extends Application {
             s.close();
         });
 
-        // buttons
         Button okBtn = new Button("Применить");
         okBtn.getStyleClass().add("play-button");
         Button cancelBtn = new Button("Отмена");
@@ -720,7 +715,6 @@ public class LauncherApp extends Application {
 
             if (modeChanged) applyWindowMode(cfg.windowMode);
 
-            // пересобираем layout ВСЕГДА — подхватывает showLog и buttonLayout
             applyLayout();
 
             s.close();
@@ -763,10 +757,6 @@ public class LauncherApp extends Application {
         s.showAndWait();
     }
 
-    // ============================================================
-    // LOG WINDOW
-    // ============================================================
-
     private void openLogWindow() {
         if (logInSeparateWindow()) return;
 
@@ -795,10 +785,6 @@ public class LauncherApp extends Application {
         logStage.show();
     }
 
-    // ============================================================
-    // FABRIC LOADERS
-    // ============================================================
-
     private void reloadFabricLoaders(String mcVersion) {
         if (mcVersion == null || mcVersion.isBlank()) return;
         fabricLoaderBox.setDisable(true);
@@ -825,9 +811,57 @@ public class LauncherApp extends Application {
         }, "fabric-loaders").start();
     }
 
-    // ============================================================
-    // GAME LAUNCH
-    // ============================================================
+    private void reloadForgeVersions(String mcVersion) {
+        if (mcVersion == null || mcVersion.isBlank()) return;
+        forgeVersionBox.setDisable(true);
+        forgeVersionBox.getItems().clear();
+        forgeVersionBox.setPromptText("загрузка forge...");
+        logLine("→ forge versions для " + mcVersion + " ...");
+
+        new Thread(() -> {
+            try {
+                List<String> versions = VersionManifest.fetchForgeVersions(mcVersion);
+                Platform.runLater(() -> {
+                    forgeVersionBox.setItems(FXCollections.observableArrayList(versions));
+                    if (!versions.isEmpty()) forgeVersionBox.setValue(versions.get(0));
+                    forgeVersionBox.setDisable(versions.isEmpty());
+                    forgeVersionBox.setPromptText(versions.isEmpty() ? "нет forge" : "forge...");
+                    logLine("✓ forge версий: " + versions.size());
+                });
+            } catch (Exception ex) {
+                Platform.runLater(() -> {
+                    forgeVersionBox.setPromptText("ошибка загрузки");
+                    logLine("✗ forge versions: " + ex.getMessage());
+                });
+            }
+        }, "forge-versions").start();
+    }
+
+    private void reloadQuiltLoaders(String mcVersion) {
+        if (mcVersion == null || mcVersion.isBlank()) return;
+        quiltLoaderBox.setDisable(true);
+        quiltLoaderBox.getItems().clear();
+        quiltLoaderBox.setPromptText("загрузка quilt...");
+        logLine("→ quilt loaders для " + mcVersion + " ...");
+
+        new Thread(() -> {
+            try {
+                List<String> loaders = VersionManifest.fetchQuiltLoaders(mcVersion);
+                Platform.runLater(() -> {
+                    quiltLoaderBox.setItems(FXCollections.observableArrayList(loaders));
+                    if (!loaders.isEmpty()) quiltLoaderBox.setValue(loaders.get(0));
+                    quiltLoaderBox.setDisable(loaders.isEmpty());
+                    quiltLoaderBox.setPromptText(loaders.isEmpty() ? "нет quilt" : "quilt...");
+                    logLine("✓ quilt лоадеров: " + loaders.size());
+                });
+            } catch (Exception ex) {
+                Platform.runLater(() -> {
+                    quiltLoaderBox.setPromptText("ошибка загрузки");
+                    logLine("✗ quilt loaders: " + ex.getMessage());
+                });
+            }
+        }, "quilt-loaders").start();
+    }
 
     private void maybeAutoLaunch(boolean enabled) {
         if (!enabled || session == null || versionBox.getValue() == null || playBtn.isDisabled()) return;
@@ -841,17 +875,29 @@ public class LauncherApp extends Application {
         if (ver == null || ver.isBlank()) { logLine("✗ выбери версию"); return; }
 
         boolean isFabric = "Fabric".equals(loaderBox.getValue());
-        final String loaderVer = isFabric ? fabricLoaderBox.getValue() : null;
-        if (isFabric && (loaderVer == null || loaderVer.isBlank())) {
-            logLine("✗ выбери версию fabric-лоадера");
-            return;
+        boolean isForge  = "Forge".equals(loaderBox.getValue());
+        boolean isQuilt  = "Quilt".equals(loaderBox.getValue());
+        final String fabricLoaderVer = isFabric ? fabricLoaderBox.getValue() : null;
+        final String forgeLoaderVer  = isForge  ? forgeVersionBox.getValue()  : null;
+        final String quiltLoaderVer  = isQuilt  ? quiltLoaderBox.getValue()   : null;
+
+        if (isFabric && (fabricLoaderVer == null || fabricLoaderVer.isBlank())) {
+            logLine("✗ выбери версию fabric-лоадера"); return;
+        }
+        if (isForge && (forgeLoaderVer == null || forgeLoaderVer.isBlank())) {
+            logLine("✗ выбери версию forge"); return;
+        }
+        if (isQuilt && (quiltLoaderVer == null || quiltLoaderVer.isBlank())) {
+            logLine("✗ выбери версию quilt-лоадера"); return;
         }
 
         playBtn.setDisable(true);
         progressBar.setVisible(true);
         progressBar.setProgress(0);
         logLine("→ запуск Minecraft " + ver
-                + (isFabric ? " (fabric " + loaderVer + ")" : "")
+                + (isFabric ? " (fabric " + fabricLoaderVer + ")" : "")
+                + (isForge  ? " (forge "  + forgeLoaderVer  + ")" : "")
+                + (isQuilt  ? " (quilt "  + quiltLoaderVer  + ")" : "")
                 + " [" + session.type() + "] ...");
 
         final boolean hiddenToTray = trayReady && Boolean.TRUE.equals(cfg.minimizeOnPlay);
@@ -870,9 +916,20 @@ public class LauncherApp extends Application {
                 String launchId = ver;
                 if (isFabric) {
                     Platform.runLater(() -> logLine("→ установка fabric-профиля ..."));
-                    launchId = FabricInstaller.install(GAME_DIR, ver, loaderVer);
+                    launchId = FabricInstaller.install(GAME_DIR, ver, fabricLoaderVer);
                     final String fid = launchId;
                     Platform.runLater(() -> logLine("✓ fabric профиль: " + fid));
+                } else if (isForge) {
+                    Platform.runLater(() -> logLine("→ установка forge (может занять пару минут) ..."));
+                    launchId = ForgeInstaller.install(GAME_DIR, ver, forgeLoaderVer, pct ->
+                            Platform.runLater(() -> progressBar.setProgress(pct)));
+                    final String fid = launchId;
+                    Platform.runLater(() -> logLine("✓ forge профиль: " + fid));
+                } else if (isQuilt) {
+                    Platform.runLater(() -> logLine("→ установка quilt-профиля ..."));
+                    launchId = QuiltInstaller.install(GAME_DIR, ver, quiltLoaderVer);
+                    final String fid = launchId;
+                    Platform.runLater(() -> logLine("✓ quilt профиль: " + fid));
                 }
 
                 final String finalLaunchId = launchId;
@@ -915,10 +972,6 @@ public class LauncherApp extends Application {
         stage.toFront();
         stage.requestFocus();
     }
-
-    // ============================================================
-    // TRAY
-    // ============================================================
 
     private void setupTray() {
         if (!SystemTray.isSupported()) return;
@@ -983,10 +1036,6 @@ public class LauncherApp extends Application {
     }
 
     private void logLine(String s) { log.appendText(s + System.lineSeparator()); }
-
-    // ============================================================
-    // DISCORD RPC
-    // ============================================================
 
     private void initLauncherRpc() {
         if (rpcStarted) return;

@@ -51,7 +51,7 @@ public class GameLauncher {
             }
         }
 
-        // 2) Classpath: только НЕ-natives jar'ы.
+        // 2) Classpath.
         List<String> cp = new ArrayList<>();
         cp.add(clientJar.toAbsolutePath().toString());
         for (VersionJson.Library lib : vj.libraries) {
@@ -63,38 +63,9 @@ public class GameLauncher {
             Path p = libsRoot.resolve(rel);
             if (Files.exists(p)) cp.add(p.toAbsolutePath().toString());
         }
+        String classpath = String.join(";", cp);
 
-        // === DEBUG / FALLBACK: если lwjgl-glfw не попал в classpath, добираем вручную ===
-        String cpJoin = String.join(";", cp);
-        boolean hasGlfwMain = cp.stream().anyMatch(s ->
-                s.toLowerCase().endsWith("lwjgl-glfw-3.3.3.jar") || s.toLowerCase().endsWith("lwjgl-glfw-3.3.1.jar"));
-        System.out.println("[WORM-DEBUG] cp entries=" + cp.size() + " lwjgl-glfw main=" + hasGlfwMain);
-        if (!hasGlfwMain) {
-            Path glfwRoot = libsRoot.resolve("org/lwjgl/lwjgl-glfw");
-            if (Files.isDirectory(glfwRoot)) {
-                try (var vers = Files.list(glfwRoot)) {
-                    for (Path v : vers.filter(Files::isDirectory).toList()) {
-                        try (var jars = Files.list(v)) {
-                            for (Path j : jars.filter(p ->
-                                    p.getFileName().toString().endsWith(".jar")
-                                    && !p.getFileName().toString().contains("-natives-")).toList()) {
-                                String abs = j.toAbsolutePath().toString();
-                                if (!cp.contains(abs)) {
-                                    cp.add(abs);
-                                    System.out.println("[WORM-DEBUG] force-added " + j);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            cpJoin = String.join(";", cp);
-        }
-        // === /DEBUG ===
-
-        String classpath = cpJoin;
-
-        // 3) Natives: извлекаем .dll/.so/.dylib в natives/<versionId>/.
+        // 3) Natives extraction.
         Files.createDirectories(natives);
         for (VersionJson.Library lib : vj.libraries) {
             if (!lib.rules().isEmpty() && !Rules.allows(lib.rules())) continue;
@@ -109,43 +80,63 @@ public class GameLauncher {
             }
         }
 
+        // 4) Собираем команду из аргументов version.json.
         List<String> cmd = new ArrayList<>();
         cmd.add(System.getProperty("java.home") + "\\bin\\java.exe");
         cmd.add("-Xmx2G");
-        cmd.add("-Dfile.encoding=UTF-8");
-        cmd.add("-Djava.library.path=" + natives.toAbsolutePath());
-        cmd.add("-Djna.tmpdir=" + natives.toAbsolutePath());
-        cmd.add("-Dorg.lwjgl.system.SharedLibraryExtractPath=" + natives.toAbsolutePath());
-        cmd.add("-Dio.netty.native.workdir=" + natives.toAbsolutePath());
-        cmd.add("-Dminecraft.launcher.brand=worm-launcher");
-        cmd.add("-Dminecraft.launcher.version=1.0.0");
-        if (Files.exists(logCfg))
-            cmd.add("-Dlog4j.configurationFile=" + logCfg.toAbsolutePath());
 
+        Map<String, String> vars = new HashMap<>();
+        vars.put("natives_directory", natives.toAbsolutePath().toString());
+        vars.put("launcher_name", "worm-launcher");
+        vars.put("launcher_version", "1.0.0");
+        vars.put("classpath", classpath);
+        vars.put("classpath_separator", ";");
+        vars.put("library_directory", libsRoot.toAbsolutePath().toString());
+        vars.put("auth_player_name", session.username());
+        vars.put("version_name", vj.id);
+        vars.put("game_directory", gameDir.toAbsolutePath().toString());
+        vars.put("assets_root", assetsDir.toAbsolutePath().toString());
+        vars.put("assets_index_name", vj.assetIndexId);
+        vars.put("auth_uuid", session.uuid());
+        vars.put("auth_access_token", session.accessToken());
+        vars.put("user_type", session.userType());
+        vars.put("version_type", "release");
+        vars.put("resolution_width", "854");
+        vars.put("resolution_height", "480");
+
+        for (String arg : vj.jvmArguments) {
+            cmd.add(substitute(arg, vars));
+        }
+
+        // authlib-injector только для Ely.by
         if (session.isEly()) {
             cmd.add("-javaagent:" + authlib.toAbsolutePath() + "=" + AUTH_SERVER);
         }
 
-        cmd.add("-cp");
-        cmd.add(classpath);
+        // log4j конфиг
+        if (Files.exists(logCfg)) {
+            cmd.add("-Dlog4j.configurationFile=" + logCfg.toAbsolutePath());
+        }
+
         cmd.add(vj.mainClass);
 
-        cmd.add("--username");    cmd.add(session.username());
-        cmd.add("--uuid");        cmd.add(session.uuid());
-        cmd.add("--accessToken"); cmd.add(session.accessToken());
-        cmd.add("--clientId");    cmd.add("");
-        cmd.add("--xuid");        cmd.add("");
-        cmd.add("--userType");    cmd.add(session.userType());
-        cmd.add("--versionType"); cmd.add("release");
-        cmd.add("--version");     cmd.add(vj.id);
-        cmd.add("--gameDir");     cmd.add(gameDir.toAbsolutePath().toString());
-        cmd.add("--assetsDir");   cmd.add(assetsDir.toAbsolutePath().toString());
-        cmd.add("--assetIndex");  cmd.add(vj.assetIndexId);
+        for (String arg : vj.gameArguments) {
+            cmd.add(substitute(arg, vars));
+        }
 
         ProcessBuilder pb = new ProcessBuilder(cmd);
         pb.directory(gameDir.toFile());
         pb.inheritIO();
         return pb.start();
+    }
+
+    private static String substitute(String s, Map<String, String> vars) {
+        if (s == null) return "";
+        String out = s;
+        for (Map.Entry<String, String> e : vars.entrySet()) {
+            out = out.replace("${" + e.getKey() + "}", e.getValue());
+        }
+        return out;
     }
 
     private static boolean isNative(VersionJson.Library lib) {

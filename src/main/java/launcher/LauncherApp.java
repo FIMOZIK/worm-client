@@ -3,6 +3,7 @@ package launcher;
 import javafx.application.Application;
 import javafx.application.Platform;
 import javafx.collections.FXCollections;
+import javafx.event.ActionEvent;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Node;
@@ -15,6 +16,7 @@ import javafx.scene.media.Media;
 import javafx.scene.media.MediaPlayer;
 import javafx.scene.media.MediaView;
 import javafx.scene.paint.Color;
+import javafx.scene.text.Font;
 import javafx.stage.FileChooser;
 import javafx.stage.Modality;
 import javafx.stage.Stage;
@@ -48,7 +50,9 @@ import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Base64;
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
 public class LauncherApp extends Application {
@@ -73,12 +77,16 @@ public class LauncherApp extends Application {
     private StackPane rootPane;
     private VBox contentHolder;
 
+    private boolean autoLaunchFired = false;
+
     private Label titleLabel;
     private Label statusLabel;
     private TextField nickField;
     private PasswordField passField;
     private Button loginBtn, logoutBtn, oauthBtn, msBtn, openFolder, checkUpd, settingsBtn;
     private CheckBox minimizeBox, autoLaunchBox;
+    private ComboBox<Profile> profileBox;
+    private Button saveProfileBtn, deleteProfileBtn;
     private ComboBox<String> versionBox;
     private ComboBox<String> loaderBox;
     private ComboBox<String> fabricLoaderBox;
@@ -87,6 +95,8 @@ public class LauncherApp extends Application {
     private Button playBtn;
     private ProgressBar progressBar;
     private TextArea log;
+
+    private String pendingLoaderVersion;
 
     private ImageView bgImageView;
     private MediaView bgMediaView;
@@ -102,6 +112,11 @@ public class LauncherApp extends Application {
     public void start(Stage stage) {
         this.stage = stage;
         Platform.setImplicitExit(false);
+
+        if (cfg.profiles == null) cfg.profiles = new java.util.ArrayList<>();
+        if (cfg.autoCheckUpdates == null) cfg.autoCheckUpdates = true;
+        SoundManager.init(cfg.keypressSoundPath);
+        SoundManager.setEnabled(!Boolean.FALSE.equals(cfg.soundsEnabled) && cfg.keypressSoundPath != null);
 
         initLauncherRpc();
         stage.getIcons().add(makeIcon());
@@ -135,7 +150,19 @@ public class LauncherApp extends Application {
 
         autoLaunchBox = new CheckBox("авто-запуск MC после входа");
         autoLaunchBox.setSelected(Boolean.TRUE.equals(cfg.autoLaunch));
-        autoLaunchBox.selectedProperty().addListener((o, a, b) -> { cfg.autoLaunch = b; Config.save(cfg); });
+        autoLaunchBox.selectedProperty().addListener((o, a, b) -> {
+            cfg.autoLaunch = b;
+            Config.save(cfg);
+            if (!b) autoLaunchFired = false;
+        });
+
+        profileBox = new ComboBox<>();
+        profileBox.setPrefWidth(180);
+        profileBox.setPromptText("профиль...");
+        refreshProfiles();
+
+        saveProfileBtn = new Button("+ профиль");
+        deleteProfileBtn = new Button("×");
 
         versionBox = new ComboBox<>();
         versionBox.setPrefWidth(200);
@@ -214,6 +241,7 @@ public class LauncherApp extends Application {
 
         scene.getStylesheets().add(getClass().getResource("/styles.css").toExternalForm());
         ThemeManager.apply(scene, cfg);
+        applyFont(scene);
 
         stage.setTitle("worm launcher " + LAUNCHER_VERSION);
         stage.setScene(scene);
@@ -225,6 +253,8 @@ public class LauncherApp extends Application {
 
         rebuildBgLayer();
         applyLayout();
+
+        wireSounds();
 
         stage.setOnCloseRequest(ev -> {
             if (!stage.isMaximized() && !stage.isFullScreen()) {
@@ -289,6 +319,12 @@ public class LauncherApp extends Application {
             applyLayout();
         });
 
+        saveProfileBtn.setOnAction(e -> saveCurrentProfile());
+        deleteProfileBtn.setOnAction(e -> deleteSelectedProfile());
+        profileBox.valueProperty().addListener((obs, oldP, newP) -> {
+            if (newP != null) applyProfile(newP);
+        });
+
         loginBtn.setOnAction(e -> {
             loginBtn.setDisable(true);
             String nickText = nickField.getText().trim();
@@ -309,7 +345,6 @@ public class LauncherApp extends Application {
                         setStatus("ely: " + gs.username(), true);
                         refreshLauncherPresenceImages();
                         updateLauncherPresence("logged in as " + gs.username());
-                        maybeAutoLaunch(autoLaunchBox.isSelected());
                     });
                 } catch (Exception ex) {
                     Platform.runLater(() -> { logLine("✗ " + ex.getMessage()); loginBtn.setDisable(false); });
@@ -337,7 +372,6 @@ public class LauncherApp extends Application {
                         setStatus("ely: " + gs.username(), true);
                         refreshLauncherPresenceImages();
                         updateLauncherPresence("logged in as " + gs.username());
-                        maybeAutoLaunch(autoLaunchBox.isSelected());
                     });
                 } catch (Exception ex) {
                     Platform.runLater(() -> { logLine("✗ Ely OAuth: " + ex.getMessage()); oauthBtn.setDisable(false); });
@@ -370,7 +404,6 @@ public class LauncherApp extends Application {
                         setStatus("mojang: " + gs.username(), true);
                         refreshLauncherPresenceImages();
                         updateLauncherPresence("logged in as " + gs.username());
-                        maybeAutoLaunch(autoLaunchBox.isSelected());
                     });
                 } catch (Exception ex) {
                     Platform.runLater(() -> { logLine("✗ Microsoft: " + ex.getMessage()); msBtn.setDisable(false); });
@@ -396,13 +429,8 @@ public class LauncherApp extends Application {
             catch (Exception ex) { logLine("✗ " + ex.getMessage()); }
         });
 
-        checkUpd.setOnAction(e -> {
-            logLine("→ проверка обновлений...");
-            new Thread(() -> {
-                try { Thread.sleep(400); Platform.runLater(() -> logLine("✓ установлена версия " + LAUNCHER_VERSION + " (последняя)")); }
-                catch (Exception ex) { Platform.runLater(() -> logLine("✗ " + ex.getMessage())); }
-            }, "check-upd").start();
-        });
+        // ===== проверка обновлений — громкая =====
+        checkUpd.setOnAction(e -> checkUpdatesAsync(true));
 
         playBtn.setOnAction(e -> startGame());
 
@@ -418,16 +446,185 @@ public class LauncherApp extends Application {
         }
 
         stage.show();
+
+        // тихая проверка на старте — только строка в лог, без диалогов
+        if (Boolean.TRUE.equals(cfg.autoCheckUpdates)) {
+            startupUpdateCheck();
+        }
     }
 
     @Override
     public void stop() {
         stopLauncherRpc();
+        SoundManager.stop();
         if (bgMediaPlayer != null) {
             try { bgMediaPlayer.stop(); bgMediaPlayer.dispose(); } catch (Exception ignored) {}
             bgMediaPlayer = null;
         }
     }
+
+    // ============================================================
+    // AUTO-UPDATE
+    // ============================================================
+
+    private void startupUpdateCheck() {
+        new Thread(() -> {
+            try {
+                UpdateChecker.UpdateInfo info = UpdateChecker.check(LAUNCHER_VERSION);
+                if (info != null) {
+                    Platform.runLater(() -> logLine("⚠ доступно обновление " + info.tagName()
+                            + " — нажми \"Проверить обновления\""));
+                }
+            } catch (Exception ignored) {
+                // тихо — не спамим лог при отсутствии интернета / репозитория
+            }
+        }, "startup-upd-check").start();
+    }
+
+    private void checkUpdatesAsync(boolean loud) {
+        if (loud) logLine("→ проверка обновлений...");
+        new Thread(() -> {
+            try {
+                UpdateChecker.UpdateInfo info = UpdateChecker.check(LAUNCHER_VERSION);
+                Platform.runLater(() -> {
+                    if (info == null) {
+                        logLine("✓ установлена последняя версия (" + LAUNCHER_VERSION + ")");
+                        if (loud) {
+                            showInfo("Обновления", "Установлена последняя версия: " + LAUNCHER_VERSION);
+                        }
+                    } else {
+                        logLine("⚠ доступно обновление " + info.tagName());
+                        showUpdateDialog(info);
+                    }
+                });
+            } catch (Exception ex) {
+                Platform.runLater(() -> {
+                    logLine("⚠ проверка обновлений не удалась: " + ex.getMessage());
+                    if (loud) showInfo("Обновления", "Не удалось проверить:\n" + ex.getMessage());
+                });
+            }
+        }, "upd-check").start();
+    }
+
+    private void showUpdateDialog(UpdateChecker.UpdateInfo info) {
+        Alert alert = new Alert(Alert.AlertType.INFORMATION);
+        alert.initOwner(stage);
+        alert.setTitle("Доступно обновление");
+        alert.setHeaderText("worm launcher " + info.tagName() + " (у тебя " + LAUNCHER_VERSION + ")");
+
+        String body = info.body() == null ? "" : info.body();
+        if (body.length() > 800) body = body.substring(0, 800) + "…";
+        TextArea ta = new TextArea(body);
+        ta.setEditable(false);
+        ta.setWrapText(true);
+        ta.setPrefRowCount(10);
+        ta.setPrefColumnCount(50);
+
+        alert.getDialogPane().setContent(ta);
+
+        ButtonType download = new ButtonType("Скачать", ButtonBar.ButtonData.OK_DONE);
+        ButtonType later    = new ButtonType("Позже", ButtonBar.ButtonData.CANCEL_CLOSE);
+        alert.getButtonTypes().setAll(download, later);
+
+        Optional<ButtonType> res = alert.showAndWait();
+        if (res.isPresent() && res.get() == download) {
+            UpdateChecker.openInBrowser(info.htmlUrl());
+            logLine("→ открыл страницу релиза: " + info.htmlUrl());
+        }
+    }
+
+    private void showInfo(String title, String msg) {
+        Alert a = new Alert(Alert.AlertType.INFORMATION);
+        a.initOwner(stage);
+        a.setTitle(title);
+        a.setHeaderText(null);
+        a.setContentText(msg);
+        a.showAndWait();
+    }
+
+    // ============================================================
+    // PROFILES
+    // ============================================================
+
+    private void refreshProfiles() {
+        profileBox.setItems(FXCollections.observableArrayList(cfg.profiles));
+        if (cfg.profiles.isEmpty()) profileBox.setPromptText("нет профилей");
+        else profileBox.setPromptText("профиль...");
+    }
+
+    private void applyProfile(Profile p) {
+        if (p.mcVersion != null && !p.mcVersion.isBlank()) {
+            versionBox.setValue(p.mcVersion);
+        }
+        String loader = p.loader == null ? "Vanilla" : p.loader;
+        loaderBox.setValue(loader);
+        pendingLoaderVersion = p.loaderVersion;
+        logLine("→ профиль применён: " + p.name);
+    }
+
+    private void saveCurrentProfile() {
+        if (versionBox.getValue() == null) { logLine("✗ версия не выбрана"); return; }
+        TextInputDialog dlg = new TextInputDialog("Мой модпак");
+        dlg.setTitle("Сохранить профиль");
+        dlg.setHeaderText("Название профиля:");
+        dlg.initOwner(stage);
+        Optional<String> res = dlg.showAndWait();
+        if (res.isEmpty() || res.get().isBlank()) return;
+        String name = res.get().trim();
+        String loader = loaderBox.getValue();
+        String lv = null;
+        if ("Fabric".equals(loader)) lv = fabricLoaderBox.getValue();
+        else if ("Forge".equals(loader)) lv = forgeVersionBox.getValue();
+        else if ("Quilt".equals(loader)) lv = quiltLoaderBox.getValue();
+
+        cfg.profiles.removeIf(x -> x.name != null && x.name.equals(name));
+        cfg.profiles.add(new Profile(name, versionBox.getValue(), loader, lv));
+        Config.save(cfg);
+        refreshProfiles();
+        for (Profile p : cfg.profiles) if (p.name.equals(name)) profileBox.setValue(p);
+        logLine("✓ профиль сохранён: " + name);
+    }
+
+    private void deleteSelectedProfile() {
+        Profile p = profileBox.getValue();
+        if (p == null) return;
+        cfg.profiles.removeIf(x -> x.name != null && x.name.equals(p.name));
+        Config.save(cfg);
+        refreshProfiles();
+        logLine("✓ профиль удалён: " + p.name);
+    }
+
+    // ============================================================
+    // SOUND / FONT
+    // ============================================================
+
+    private void wireSounds() {
+        for (Button b : new Button[]{loginBtn, logoutBtn, oauthBtn, msBtn, openFolder, checkUpd,
+                settingsBtn, playBtn, saveProfileBtn, deleteProfileBtn}) {
+            if (b == null) continue;
+            b.addEventHandler(ActionEvent.ACTION, e -> SoundManager.playKeypress());
+        }
+    }
+
+    private void applyFont(Scene scene) {
+        if (cfg.customFontPath == null || cfg.customFontPath.isBlank()) return;
+        try {
+            Path p = Path.of(cfg.customFontPath);
+            if (!Files.exists(p)) return;
+            Font f = Font.loadFont(p.toUri().toString(), 14);
+            if (f == null) return;
+            String fam = f.getFamily().replace("'", "");
+            String css = ".root, .label, .button, .text-field, .text-area, " +
+                    ".combo-box, .list-cell, .check-box, .radio-button, .tooltip " +
+                    "{ -fx-font-family: '" + fam + "'; }";
+            String b64 = Base64.getEncoder().encodeToString(css.getBytes(StandardCharsets.UTF_8));
+            scene.getStylesheets().add("data:text/css;base64," + b64);
+        } catch (Exception ignored) {}
+    }
+
+    // ============================================================
+    // LAYOUT
+    // ============================================================
 
     private void applyLayout() {
         String layout = cfg.buttonLayout == null ? "TOP" : cfg.buttonLayout;
@@ -435,8 +632,8 @@ public class LauncherApp extends Application {
 
         detachAll(titleLabel, statusLabel, nickField, passField, loginBtn, logoutBtn,
                 oauthBtn, msBtn, openFolder, checkUpd, settingsBtn,
-                minimizeBox, autoLaunchBox, versionBox, loaderBox,
-                fabricLoaderBox, forgeVersionBox, quiltLoaderBox,
+                minimizeBox, autoLaunchBox, profileBox, saveProfileBtn, deleteProfileBtn,
+                versionBox, loaderBox, fabricLoaderBox, forgeVersionBox, quiltLoaderBox,
                 playBtn, progressBar);
         if (!logInSeparate) detachAll(log);
 
@@ -444,6 +641,10 @@ public class LauncherApp extends Application {
 
         HBox titleRow = new HBox(12, titleLabel, statusLabel);
         titleRow.setAlignment(Pos.CENTER_LEFT);
+
+        HBox profileRow = new HBox(8,
+                new Label("профиль:"), profileBox, saveProfileBtn, deleteProfileBtn);
+        profileRow.setAlignment(Pos.CENTER_LEFT);
 
         if ("LEFT".equals(layout)) {
             VBox sidebar = new VBox(8,
@@ -464,7 +665,7 @@ public class LauncherApp extends Application {
             playRow.setAlignment(Pos.CENTER_LEFT);
             HBox.setHgrow(versionBox, Priority.ALWAYS);
 
-            VBox right = new VBox(10, titleRow, playRow);
+            VBox right = new VBox(10, titleRow, profileRow, playRow);
             HBox.setHgrow(right, Priority.ALWAYS);
 
             if (!logInSeparate && !Boolean.FALSE.equals(cfg.showLog)) {
@@ -493,7 +694,7 @@ public class LauncherApp extends Application {
             playRow.setAlignment(Pos.CENTER_LEFT);
             HBox.setHgrow(versionBox, Priority.ALWAYS);
 
-            contentHolder.getChildren().addAll(titleRow, authRow, actionRow, optsRow, new Separator(), playRow);
+            contentHolder.getChildren().addAll(titleRow, authRow, actionRow, optsRow, profileRow, new Separator(), playRow);
 
             if (!logInSeparate && !Boolean.FALSE.equals(cfg.showLog)) {
                 contentHolder.getChildren().addAll(new Label("лог:"), log);
@@ -648,6 +849,92 @@ public class LauncherApp extends Application {
             rebuildBgLayer();
         });
 
+        Label fontPath = new Label(cfg.customFontPath == null ? "по умолчанию" : cfg.customFontPath);
+        fontPath.getStyleClass().add("subtitle-label");
+        fontPath.setWrapText(true);
+        Button pickFont = new Button("Выбрать .ttf");
+        Button clearFont = new Button("Сбросить");
+        pickFont.setOnAction(e -> {
+            FileChooser fc = new FileChooser();
+            fc.getExtensionFilters().add(
+                    new FileChooser.ExtensionFilter("Шрифты", "*.ttf", "*.otf"));
+            java.io.File f = fc.showOpenDialog(s);
+            if (f != null) {
+                cfg.customFontPath = f.getAbsolutePath();
+                fontPath.setText(cfg.customFontPath);
+            }
+        });
+        clearFont.setOnAction(e -> {
+            cfg.customFontPath = null;
+            fontPath.setText("по умолчанию");
+        });
+
+        Label soundPath = new Label(cfg.keypressSoundPath == null || cfg.keypressSoundPath.isBlank()
+                ? "не выбрано" : cfg.keypressSoundPath);
+        soundPath.getStyleClass().add("subtitle-label");
+        soundPath.setWrapText(true);
+        Button pickSound = new Button("Выбрать...");
+        Button resetSound = new Button("Сбросить");
+        Button testSound = new Button("Тест");
+
+        CheckBox soundsBox = new CheckBox();
+
+        Runnable updateSoundUI = () -> {
+            boolean hasSound = cfg.keypressSoundPath != null
+                    && !cfg.keypressSoundPath.isBlank()
+                    && Files.exists(Path.of(cfg.keypressSoundPath));
+            soundsBox.setDisable(!hasSound);
+            if (!hasSound) {
+                soundsBox.setSelected(false);
+                soundsBox.setText("звук нажатия клавиш: выключен");
+            } else {
+                soundsBox.setText(soundsBox.isSelected()
+                        ? "звук нажатия клавиш: включён"
+                        : "звук нажатия клавиш: выключен");
+            }
+        };
+        soundsBox.selectedProperty().addListener((o, a, b) -> updateSoundUI.run());
+
+        boolean initHasSound = cfg.keypressSoundPath != null
+                && !cfg.keypressSoundPath.isBlank()
+                && Files.exists(Path.of(cfg.keypressSoundPath));
+        soundsBox.setSelected(initHasSound && !Boolean.FALSE.equals(cfg.soundsEnabled));
+        updateSoundUI.run();
+
+        pickSound.setOnAction(e -> {
+            FileChooser fc = new FileChooser();
+            fc.getExtensionFilters().addAll(
+                    new FileChooser.ExtensionFilter("Звуки", "*.wav", "*.mp3", "*.aiff", "*.mp4", "*.m4a", "*.aac"),
+                    new FileChooser.ExtensionFilter("Все файлы", "*.*")
+            );
+            java.io.File f = fc.showOpenDialog(s);
+            if (f != null) {
+                cfg.keypressSoundPath = f.getAbsolutePath();
+                soundPath.setText(cfg.keypressSoundPath);
+                SoundManager.init(cfg.keypressSoundPath);
+                soundsBox.setSelected(true);
+                updateSoundUI.run();
+            }
+        });
+        resetSound.setOnAction(e -> {
+            cfg.keypressSoundPath = null;
+            soundPath.setText("не выбрано");
+            SoundManager.init(null);
+            soundsBox.setSelected(false);
+            updateSoundUI.run();
+        });
+        testSound.setOnAction(e -> {
+            if (cfg.keypressSoundPath == null || cfg.keypressSoundPath.isBlank()) {
+                logLine("⚠ сначала выбери файл звука");
+                return;
+            }
+            SoundManager.init(cfg.keypressSoundPath);
+            SoundManager.playKeypress();
+        });
+
+        CheckBox autoCheckUpdBox = new CheckBox("проверять обновления при запуске");
+        autoCheckUpdBox.setSelected(!Boolean.FALSE.equals(cfg.autoCheckUpdates));
+
         ToggleGroup wmGroup = new ToggleGroup();
         RadioButton wmWindowed   = new RadioButton("Оконный");
         RadioButton wmMaximized  = new RadioButton("Развёрнутый");
@@ -696,6 +983,14 @@ public class LauncherApp extends Application {
             cfg.darkMode = darkBox.isSelected();
             cfg.showLog = showLogBox.isSelected();
             cfg.buttonLayout = layoutCombo.getValue();
+            cfg.autoCheckUpdates = autoCheckUpdBox.isSelected();
+
+            boolean hasSound = cfg.keypressSoundPath != null
+                    && !cfg.keypressSoundPath.isBlank()
+                    && Files.exists(Path.of(cfg.keypressSoundPath));
+            cfg.soundsEnabled = hasSound && soundsBox.isSelected();
+            SoundManager.setEnabled(cfg.soundsEnabled);
+            SoundManager.init(hasSound ? cfg.keypressSoundPath : null);
 
             String newMode;
             if (wmFullscreen.isSelected())      newMode = "FULLSCREEN";
@@ -709,6 +1004,7 @@ public class LauncherApp extends Application {
             for (Window w : Stage.getWindows()) {
                 if (w instanceof Stage st && st.getScene() != null) {
                     ThemeManager.apply(st.getScene(), cfg);
+                    applyFont(st.getScene());
                 }
             }
             updateTint();
@@ -731,6 +1027,14 @@ public class LauncherApp extends Application {
                 new Label("Фон (картинка / gif / видео)"), bgPath, new HBox(8, pickBg, clearBg),
                 opacityLbl, bgOpacity,
                 new Separator(),
+                new Label("Шрифт (.ttf / .otf)"), fontPath, new HBox(8, pickFont, clearFont),
+                new Separator(),
+                new Label("Звук нажатия клавиш (wav/mp3/mp4)"), soundPath,
+                new HBox(8, pickSound, resetSound, testSound),
+                soundsBox,
+                new Separator(),
+                new Label("Обновления"), autoCheckUpdBox,
+                new Separator(),
                 new Label("Режим окна"), wmRow,
                 new Separator(),
                 new Label("Лог"), showLogBox,
@@ -752,6 +1056,7 @@ public class LauncherApp extends Application {
         Scene scene = new Scene(scroll, 560, 680);
         scene.getStylesheets().add(getClass().getResource("/styles.css").toExternalForm());
         ThemeManager.apply(scene, cfg);
+        applyFont(scene);
 
         s.setScene(scene);
         s.showAndWait();
@@ -776,6 +1081,7 @@ public class LauncherApp extends Application {
         Scene sc = new Scene(box, 640, 400);
         sc.getStylesheets().add(getClass().getResource("/styles.css").toExternalForm());
         ThemeManager.apply(sc, cfg);
+        applyFont(sc);
 
         logStage.setScene(sc);
         logStage.setOnCloseRequest(e -> {
@@ -800,6 +1106,7 @@ public class LauncherApp extends Application {
                     if (!loaders.isEmpty()) fabricLoaderBox.setValue(loaders.get(0));
                     fabricLoaderBox.setDisable(loaders.isEmpty());
                     fabricLoaderBox.setPromptText(loaders.isEmpty() ? "нет лоадеров" : "лоадер...");
+                    applyPendingToBox(fabricLoaderBox, loaders);
                     logLine("✓ fabric лоадеров: " + loaders.size());
                 });
             } catch (Exception ex) {
@@ -826,6 +1133,7 @@ public class LauncherApp extends Application {
                     if (!versions.isEmpty()) forgeVersionBox.setValue(versions.get(0));
                     forgeVersionBox.setDisable(versions.isEmpty());
                     forgeVersionBox.setPromptText(versions.isEmpty() ? "нет forge" : "forge...");
+                    applyPendingToBox(forgeVersionBox, versions);
                     logLine("✓ forge версий: " + versions.size());
                 });
             } catch (Exception ex) {
@@ -852,6 +1160,7 @@ public class LauncherApp extends Application {
                     if (!loaders.isEmpty()) quiltLoaderBox.setValue(loaders.get(0));
                     quiltLoaderBox.setDisable(loaders.isEmpty());
                     quiltLoaderBox.setPromptText(loaders.isEmpty() ? "нет quilt" : "quilt...");
+                    applyPendingToBox(quiltLoaderBox, loaders);
                     logLine("✓ quilt лоадеров: " + loaders.size());
                 });
             } catch (Exception ex) {
@@ -863,9 +1172,19 @@ public class LauncherApp extends Application {
         }, "quilt-loaders").start();
     }
 
+    private void applyPendingToBox(ComboBox<String> box, List<String> items) {
+        if (pendingLoaderVersion == null) return;
+        if (items.contains(pendingLoaderVersion)) {
+            box.setValue(pendingLoaderVersion);
+            pendingLoaderVersion = null;
+        }
+    }
+
     private void maybeAutoLaunch(boolean enabled) {
+        if (autoLaunchFired) return;
         if (!enabled || session == null || versionBox.getValue() == null || playBtn.isDisabled()) return;
-        logLine("→ авто-запуск MC включён, стартую...");
+        autoLaunchFired = true;
+        logLine("→ авто-запуск MC (один раз за сессию) ...");
         startGame();
     }
 
@@ -986,6 +1305,7 @@ public class LauncherApp extends Application {
                 tray.remove(trayIcon);
                 Config.save(cfg);
                 stopLauncherRpc();
+                SoundManager.stop();
                 if (bgMediaPlayer != null) {
                     try { bgMediaPlayer.stop(); bgMediaPlayer.dispose(); } catch (Exception ignored) {}
                 }

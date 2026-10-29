@@ -1,14 +1,48 @@
 .root {
-    -fx-base: #1e1e1e;
-    -fx-background: #141414;
-    -fx-control-inner-background: #232323;
-    -fx-accent: #4caf50;
-    -fx-focus-color: #4caf50;
-    -fx-faint-focus-color: #4caf5022;
-    -fx-text-base-color: #e0e0e0;
     -fx-font-family: "Segoe UI", "Inter", sans-serif;
 }
 
+.label { }
+.title-label { -fx-font-size: 22px; -fx-font-weight: bold; }
+.subtitle-label { -fx-font-size: 11px; }
+
+.title-bar { -fx-padding: 6 6 6 12; -fx-spacing: 8; }
+.title-bar .title-text { -fx-font-size: 13px; -fx-font-weight: bold; }
+.title-bar .window-btn { -fx-background-radius: 0; -fx-border-radius: 0; -fx-cursor: hand; }
+
+.text-field, .password-field {
+    -fx-background-radius: 4;
+    -fx-border-radius: 4;
+    -fx-padding: 6 10 6 10;
+}
+
+.combo-box { -fx-background-radius: 4; -fx-border-radius: 4; }
+
+.button {
+    -fx-background-radius: 4;
+    -fx-border-radius: 4;
+    -fx-padding: 6 14 6 14;
+    -fx-cursor: hand;
+}
+
+.play-button { -fx-font-size: 15px; -fx-font-weight: bold; -fx-padding: 8 26 8 26; }
+
+.text-area {
+    -fx-font-family: "Consolas", "JetBrains Mono", monospace;
+    -fx-font-size: 12px;
+    -fx-border-radius: 4;
+}
+
+.progress-bar { -fx-pref-height: 8px; }
+.progress-bar > .track, .progress-bar > .bar { -fx-background-radius: 4; }
+
+.settings-panel { -fx-padding: 16; -fx-spacing: 12; -fx-background-radius: 8; }
+
+.logo-dot {
+    -fx-min-width: 14; -fx-min-height: 14;
+    -fx-max-width: 14; -fx-max-height: 14;
+    -fx-background-radius: 7;
+}
 .label { -fx-text-fill: #c8c8c8; }
 
 .title-label {

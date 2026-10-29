@@ -5,12 +5,20 @@ import javafx.application.Platform;
 import javafx.collections.FXCollections;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
+import javafx.scene.Node;
+import javafx.scene.Parent;
 import javafx.scene.Scene;
 import javafx.scene.control.*;
 import javafx.scene.image.*;
 import javafx.scene.layout.*;
+import javafx.scene.media.Media;
+import javafx.scene.media.MediaPlayer;
+import javafx.scene.media.MediaView;
 import javafx.scene.paint.Color;
+import javafx.stage.FileChooser;
+import javafx.stage.Modality;
 import javafx.stage.Stage;
+import javafx.stage.Window;
 import launcher.auth.ElyAuth;
 import launcher.auth.ElyOAuth;
 import launcher.auth.GameSession;
@@ -45,29 +53,42 @@ public class LauncherApp extends Application {
     private static final String CLIENT_ID     = "worm-launcher1";
     private static final String CLIENT_SECRET = "YZdFkv0-L5K3aADqedEp0zamy2HzcjBcUApskOHxkzSsxE-XjsuCwdUsAIfVBShk";
     private static final Path   GAME_DIR      = Path.of("D:\\wormlauncher\\game");
-
     private static final String LAUNCHER_VERSION = "1.0.0";
 
     private static final String DISCORD_APP_ID = "1564662317663391774";
     private static final String DISCORD_LARGE_IMAGE = "https://i.ibb.co/B2cptB0Y/worm-logo.png";
-
     private static final String IMGBB_API_KEY = "6fa9d19c670bd0068a70d0f053e6c9e7";
 
     private static final ConcurrentHashMap<String, byte[]> headPngCache = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<String, String> headUrlCache = new ConcurrentHashMap<>();
 
-    private final TextArea log = new TextArea();
     private GameSession session;
-    private ComboBox<String> versionBox;
-    private ProgressBar progressBar;
-    private Button playBtn;
-    private Label    statusLabel;
-
     private Config.Data cfg = Config.load();
     private TrayIcon trayIcon;
     private boolean trayReady = false;
     private Stage stage;
+    private StackPane rootPane;
+    private VBox contentHolder;
 
+    // shared controls
+    private Label titleLabel;
+    private Label statusLabel;
+    private TextField nickField;
+    private PasswordField passField;
+    private Button loginBtn, logoutBtn, oauthBtn, msBtn, openFolder, checkUpd, settingsBtn;
+    private CheckBox minimizeBox, autoLaunchBox;
+    private ComboBox<String> versionBox;
+    private Button playBtn;
+    private ProgressBar progressBar;
+    private TextArea log;
+
+    // background layers
+    private ImageView bgImageView;
+    private MediaView bgMediaView;
+    private MediaPlayer bgMediaPlayer;
+    private Region tintLayer;
+
+    // discord
     private static DiscordRPC rpc;
     private static DiscordRichPresence presence;
     private static volatile boolean rpcStarted = false;
@@ -79,60 +100,127 @@ public class LauncherApp extends Application {
         Platform.setImplicitExit(false);
 
         initLauncherRpc();
-
         stage.getIcons().add(makeIcon());
 
-        Label title = new Label("worm launcher");
-        title.getStyleClass().add("title-label");
+        // === shared controls ===
+        titleLabel = new Label("worm launcher");
+        titleLabel.getStyleClass().add("title-label");
 
         statusLabel = new Label("не вошёл");
-        statusLabel.setStyle("-fx-text-fill: #8a8a8a; -fx-font-size: 11px;");
+        statusLabel.getStyleClass().add("subtitle-label");
 
-        TextField nick = new TextField();
-        nick.setPromptText("Ely.by ник");
-        nick.setPrefWidth(150);
-        if (cfg.lastNick != null) nick.setText(cfg.lastNick);
-        PasswordField pass = new PasswordField();
-        pass.setPromptText("пароль");
-        pass.setPrefWidth(150);
+        nickField = new TextField();
+        nickField.setPromptText("Ely.by ник");
+        nickField.setPrefWidth(160);
+        if (cfg.lastNick != null) nickField.setText(cfg.lastNick);
 
-        Button loginBtn   = new Button("Войти (Ely)");
-        Button oauthBtn   = new Button("Ely через браузер");
-        Button msBtn      = new Button("Войти через Microsoft");
-        Button logoutBtn  = new Button("Выйти");
-        Button openFolder = new Button("Открыть папку игры");
-        Button checkUpd   = new Button("Проверить обновления");
+        passField = new PasswordField();
+        passField.setPromptText("пароль");
+        passField.setPrefWidth(160);
+
+        loginBtn    = new Button("Войти (Ely)");
+        logoutBtn   = new Button("Выйти");
+        oauthBtn    = new Button("Ely через браузер");
+        msBtn       = new Button("Войти через Microsoft");
+        openFolder  = new Button("Открыть папку игры");
+        checkUpd    = new Button("Проверить обновления");
+        settingsBtn = new Button("⚙ Настройки");
+
+        minimizeBox = new CheckBox("сворачивать в трей при игре");
+        minimizeBox.setSelected(Boolean.TRUE.equals(cfg.minimizeOnPlay));
+        minimizeBox.selectedProperty().addListener((o, a, b) -> { cfg.minimizeOnPlay = b; Config.save(cfg); });
+
+        autoLaunchBox = new CheckBox("авто-запуск MC после входа");
+        autoLaunchBox.setSelected(Boolean.TRUE.equals(cfg.autoLaunch));
+        autoLaunchBox.selectedProperty().addListener((o, a, b) -> { cfg.autoLaunch = b; Config.save(cfg); });
+
+        versionBox = new ComboBox<>();
+        versionBox.setPrefWidth(200);
+        versionBox.setPromptText("загрузка версий...");
+        versionBox.setDisable(true);
+
         playBtn = new Button("Играть");
         playBtn.getStyleClass().add("play-button");
         playBtn.setDisable(true);
 
-        CheckBox minimizeBox = new CheckBox("сворачивать в трей при игре");
-        minimizeBox.setSelected(Boolean.TRUE.equals(cfg.minimizeOnPlay));
-        minimizeBox.selectedProperty().addListener((o, a, b) -> {
-            cfg.minimizeOnPlay = b;
-            Config.save(cfg);
-        });
-
-        CheckBox autoLaunchBox = new CheckBox("авто-запуск MC после входа");
-        autoLaunchBox.setSelected(Boolean.TRUE.equals(cfg.autoLaunch));
-        autoLaunchBox.selectedProperty().addListener((o, a, b) -> {
-            cfg.autoLaunch = b;
-            Config.save(cfg);
-        });
-
-        versionBox = new ComboBox<>();
-        versionBox.setPrefWidth(180);
-        versionBox.setPromptText("загрузка версий...");
-        versionBox.setDisable(true);
-
         progressBar = new ProgressBar(0);
-        progressBar.setPrefWidth(240);
+        progressBar.setPrefWidth(180);
         progressBar.setVisible(false);
 
+        log = new TextArea();
         log.setEditable(false);
-        log.setPrefHeight(220);
+        log.setPrefHeight(200);
+        log.setMinHeight(120);
+        log.setMaxHeight(Double.MAX_VALUE);
+        log.setOpacity(cfg.logOpacity != null ? cfg.logOpacity : 1.0);
 
-        // ---------- список версий ----------
+        // === background layers ===
+        rootPane = new StackPane();
+
+        bgImageView = new ImageView();
+        bgImageView.setPreserveRatio(false);
+        bgImageView.fitWidthProperty().bind(rootPane.widthProperty());
+        bgImageView.fitHeightProperty().bind(rootPane.heightProperty());
+        bgImageView.setManaged(false);
+        bgImageView.setVisible(false);
+
+        bgMediaView = new MediaView();
+        bgMediaView.setPreserveRatio(false);
+        bgMediaView.fitWidthProperty().bind(rootPane.widthProperty());
+        bgMediaView.fitHeightProperty().bind(rootPane.heightProperty());
+        bgMediaView.setManaged(false);
+        bgMediaView.setVisible(false);
+
+        tintLayer = new Region();
+        tintLayer.setMouseTransparent(true);
+        updateTint();
+
+        contentHolder = new VBox();
+        contentHolder.setSpacing(10);
+        contentHolder.setPadding(new Insets(16));
+
+        rootPane.getChildren().addAll(bgImageView, bgMediaView, tintLayer, contentHolder);
+
+        // === scene ===
+        double w = cfg.windowWidth  != null ? cfg.windowWidth  : 860;
+        double h = cfg.windowHeight != null ? cfg.windowHeight : 700;
+        Scene scene = new Scene(rootPane, w, h);
+
+        scene.getStylesheets().add(getClass().getResource("/styles.css").toExternalForm());
+        ThemeManager.apply(scene, cfg);
+
+        stage.setTitle("worm launcher " + LAUNCHER_VERSION);
+        stage.setScene(scene);
+        stage.setMinWidth(620);
+        stage.setMinHeight(460);
+
+        setupTray();
+        applySavedWindowMode();
+
+        rebuildBgLayer();
+        applyLayout();
+
+        stage.setOnCloseRequest(ev -> {
+            if (!stage.isMaximized() && !stage.isFullScreen()) {
+                cfg.windowWidth  = stage.getWidth();
+                cfg.windowHeight = stage.getHeight();
+            }
+            if (stage.isFullScreen())      cfg.windowMode = "FULLSCREEN";
+            else if (stage.isMaximized())  cfg.windowMode = "MAXIMIZED";
+            else                           cfg.windowMode = "WINDOWED";
+            Config.save(cfg);
+            if (trayReady) {
+                ev.consume();
+                stage.hide();
+                trayIcon.displayMessage("worm launcher",
+                        "Свёрнут в трей. Двойной клик — открыть.",
+                        TrayIcon.MessageType.INFO);
+            }
+        });
+
+        // === handlers ===
+        settingsBtn.setOnAction(e -> openSettings());
+
         new Thread(() -> {
             try {
                 List<VersionManifest.Entry> list = VersionManifest.fetch();
@@ -142,17 +230,11 @@ public class LauncherApp extends Application {
                         .toList();
                 Platform.runLater(() -> {
                     versionBox.setItems(FXCollections.observableArrayList(releases));
-                    if (cfg.lastVersion != null && releases.contains(cfg.lastVersion)) {
-                        versionBox.setValue(cfg.lastVersion);
-                    } else if (releases.contains("1.21.11")) {
-                        versionBox.setValue("1.21.11");
-                    } else if (!releases.isEmpty()) {
-                        versionBox.setValue(releases.get(0));
-                    }
+                    if (cfg.lastVersion != null && releases.contains(cfg.lastVersion)) versionBox.setValue(cfg.lastVersion);
+                    else if (releases.contains("1.21.11")) versionBox.setValue("1.21.11");
+                    else if (!releases.isEmpty()) versionBox.setValue(releases.get(0));
                     versionBox.setDisable(false);
                     logLine("✓ версий загружено: " + releases.size());
-                    if (cfg.lastVersion != null)
-                        logLine("  восстановлена последняя версия: " + cfg.lastVersion);
                 });
             } catch (Exception ex) {
                 Platform.runLater(() -> logLine("✗ не смог загрузить версии: " + ex.getMessage()));
@@ -160,20 +242,16 @@ public class LauncherApp extends Application {
         }, "manifest").start();
 
         versionBox.valueProperty().addListener((obs, oldV, newV) -> {
-            if (newV != null && !newV.isBlank()) {
-                cfg.lastVersion = newV;
-                Config.save(cfg);
-            }
+            if (newV != null && !newV.isBlank()) { cfg.lastVersion = newV; Config.save(cfg); }
         });
 
-        // ---------- Ely: вход по паролю ----------
         loginBtn.setOnAction(e -> {
             loginBtn.setDisable(true);
-            String nickText = nick.getText().trim();
+            String nickText = nickField.getText().trim();
             logLine("→ login (ely password): " + nickText);
             new Thread(() -> {
                 try {
-                    ElyAuth.Session s = ElyAuth.login(nickText, pass.getText());
+                    ElyAuth.Session s = ElyAuth.login(nickText, passField.getText());
                     GameSession gs = GameSession.fromEly(s);
                     TokenStore.save(gs);
                     cfg.lastNick = gs.username();
@@ -181,8 +259,7 @@ public class LauncherApp extends Application {
                     Platform.runLater(() -> {
                         session = gs;
                         logLine("✓ " + gs);
-                        logLine("  сохранено в " + TokenStore.file());
-                        pass.clear();
+                        passField.clear();
                         playBtn.setDisable(false);
                         loginBtn.setDisable(false);
                         setStatus("ely: " + gs.username(), true);
@@ -191,15 +268,11 @@ public class LauncherApp extends Application {
                         maybeAutoLaunch(autoLaunchBox.isSelected());
                     });
                 } catch (Exception ex) {
-                    Platform.runLater(() -> {
-                        logLine("✗ " + ex.getMessage());
-                        loginBtn.setDisable(false);
-                    });
+                    Platform.runLater(() -> { logLine("✗ " + ex.getMessage()); loginBtn.setDisable(false); });
                 }
             }, "ely-auth").start();
         });
 
-        // ---------- Ely: вход через браузер ----------
         oauthBtn.setOnAction(e -> {
             oauthBtn.setDisable(true);
             logLine("→ login (ely browser) ...");
@@ -215,7 +288,6 @@ public class LauncherApp extends Application {
                     Platform.runLater(() -> {
                         session = gs;
                         logLine("✓ " + gs);
-                        logLine("  сохранено в " + TokenStore.file());
                         playBtn.setDisable(false);
                         oauthBtn.setDisable(false);
                         setStatus("ely: " + gs.username(), true);
@@ -224,15 +296,11 @@ public class LauncherApp extends Application {
                         maybeAutoLaunch(autoLaunchBox.isSelected());
                     });
                 } catch (Exception ex) {
-                    Platform.runLater(() -> {
-                        logLine("✗ Ely OAuth упал: " + ex.getMessage());
-                        oauthBtn.setDisable(false);
-                    });
+                    Platform.runLater(() -> { logLine("✗ Ely OAuth: " + ex.getMessage()); oauthBtn.setDisable(false); });
                 }
             }, "ely-oauth").start();
         });
 
-        // ---------- Microsoft / Mojang ----------
         msBtn.setOnAction(e -> {
             msBtn.setDisable(true);
             logLine("→ login (microsoft) ...");
@@ -243,11 +311,8 @@ public class LauncherApp extends Application {
                             logLine("→ открой " + dc.verificationUri() + " и введи код:");
                             logLine("     " + dc.userCode());
                         });
-                        try {
-                            if (Desktop.isDesktopSupported()) {
-                                Desktop.getDesktop().browse(java.net.URI.create(dc.verificationUri()));
-                            }
-                        } catch (Exception ignored) {}
+                        try { if (Desktop.isDesktopSupported()) Desktop.getDesktop().browse(java.net.URI.create(dc.verificationUri())); }
+                        catch (Exception ignored) {}
                     });
                     GameSession gs = GameSession.fromMojang(s);
                     TokenStore.save(gs);
@@ -256,7 +321,6 @@ public class LauncherApp extends Application {
                     Platform.runLater(() -> {
                         session = gs;
                         logLine("✓ " + gs);
-                        logLine("  сохранено в " + TokenStore.file());
                         playBtn.setDisable(false);
                         msBtn.setDisable(false);
                         setStatus("mojang: " + gs.username(), true);
@@ -265,64 +329,39 @@ public class LauncherApp extends Application {
                         maybeAutoLaunch(autoLaunchBox.isSelected());
                     });
                 } catch (Exception ex) {
-                    Platform.runLater(() -> {
-                        logLine("✗ Microsoft: " + ex.getMessage());
-                        msBtn.setDisable(false);
-                    });
+                    Platform.runLater(() -> { logLine("✗ Microsoft: " + ex.getMessage()); msBtn.setDisable(false); });
                 }
             }, "ms-auth").start();
         });
 
-        // ---------- выход ----------
         logoutBtn.setOnAction(e -> {
             try {
-                if (session != null && session.isEly()) {
-                    ElyAuth.invalidate(session.toEly());
-                }
+                if (session != null && session.isEly()) ElyAuth.invalidate(session.toEly());
                 TokenStore.clear();
                 session = null;
                 playBtn.setDisable(true);
                 setStatus("не вошёл", false);
                 logLine("✓ сессия удалена");
-                if (presence != null) {
-                    presence.smallImageKey = "";
-                    presence.smallImageText = "";
-                }
+                if (presence != null) { presence.smallImageKey = ""; presence.smallImageText = ""; }
                 updateLauncherPresence("idle");
-            } catch (Exception ex) {
-                logLine("✗ " + ex.getMessage());
-            }
+            } catch (Exception ex) { logLine("✗ " + ex.getMessage()); }
         });
 
-        // ---------- открыть папку игры ----------
         openFolder.setOnAction(e -> {
-            try {
-                Files.createDirectories(GAME_DIR);
-                Desktop.getDesktop().open(GAME_DIR.toFile());
-                logLine("→ открыл " + GAME_DIR);
-            } catch (Exception ex) {
-                logLine("✗ открыть папку не удалось: " + ex.getMessage());
-            }
+            try { Files.createDirectories(GAME_DIR); Desktop.getDesktop().open(GAME_DIR.toFile()); logLine("→ открыл " + GAME_DIR); }
+            catch (Exception ex) { logLine("✗ " + ex.getMessage()); }
         });
 
-        // ---------- проверить обновления ----------
         checkUpd.setOnAction(e -> {
             logLine("→ проверка обновлений...");
             new Thread(() -> {
-                try {
-                    Thread.sleep(400);
-                    Platform.runLater(() ->
-                            logLine("✓ установлена версия " + LAUNCHER_VERSION + " (последняя)"));
-                } catch (Exception ex) {
-                    Platform.runLater(() -> logLine("✗ проверка упала: " + ex.getMessage()));
-                }
+                try { Thread.sleep(400); Platform.runLater(() -> logLine("✓ установлена версия " + LAUNCHER_VERSION + " (последняя)")); }
+                catch (Exception ex) { Platform.runLater(() -> logLine("✗ " + ex.getMessage())); }
             }, "check-upd").start();
         });
 
-        // ---------- играть ----------
         playBtn.setOnAction(e -> startGame());
 
-        // ---------- сохранённая сессия ----------
         GameSession cached = TokenStore.load();
         if (cached != null) {
             session = cached;
@@ -331,56 +370,8 @@ public class LauncherApp extends Application {
             logLine("найдена сохранённая сессия: " + cached);
             refreshLauncherPresenceImages();
             updateLauncherPresence("logged in as " + cached.username());
-            if (autoLaunchBox.isSelected()) {
-                Platform.runLater(() -> maybeAutoLaunch(true));
-            }
+            if (autoLaunchBox.isSelected()) Platform.runLater(() -> maybeAutoLaunch(true));
         }
-
-        // ---------- разметка ----------
-        HBox titleRow = new HBox(12, title, statusLabel);
-        titleRow.setAlignment(Pos.CENTER_LEFT);
-
-        HBox authRow   = new HBox(8, nick, pass, loginBtn, logoutBtn);
-        authRow.setAlignment(Pos.CENTER_LEFT);
-        HBox oauthRow  = new HBox(8, oauthBtn, msBtn, openFolder, checkUpd);
-        oauthRow.setAlignment(Pos.CENTER_LEFT);
-        HBox optsRow   = new HBox(16, minimizeBox, autoLaunchBox);
-        optsRow.setAlignment(Pos.CENTER_LEFT);
-
-        HBox playRow = new HBox(8, new Label("версия:"), versionBox, playBtn, progressBar);
-        playRow.setAlignment(Pos.CENTER_LEFT);
-
-        VBox root = new VBox(10, titleRow, authRow, oauthRow, optsRow,
-                new Separator(), playRow, new Label("лог:"), log);
-        root.setPadding(new Insets(16));
-        root.setAlignment(Pos.TOP_LEFT);
-
-        double w = cfg.windowWidth  != null ? cfg.windowWidth  : 820;
-        double h = cfg.windowHeight != null ? cfg.windowHeight : 640;
-        Scene scene = new Scene(root, w, h);
-        try {
-            scene.getStylesheets().add(
-                    getClass().getResource("/styles.css").toExternalForm());
-        } catch (Exception ex) {
-            logLine("⚠ styles.css не найден: " + ex.getMessage());
-        }
-
-        stage.setTitle("worm launcher " + LAUNCHER_VERSION);
-        stage.setScene(scene);
-
-        setupTray();
-        stage.setOnCloseRequest(ev -> {
-            cfg.windowWidth  = stage.getWidth();
-            cfg.windowHeight = stage.getHeight();
-            Config.save(cfg);
-            if (trayReady) {
-                ev.consume();
-                stage.hide();
-                trayIcon.displayMessage("worm launcher",
-                        "Свёрнут в трей. Двойной клик — открыть.",
-                        TrayIcon.MessageType.INFO);
-            }
-        });
 
         stage.show();
     }
@@ -388,19 +379,395 @@ public class LauncherApp extends Application {
     @Override
     public void stop() {
         stopLauncherRpc();
+        if (bgMediaPlayer != null) {
+            try { bgMediaPlayer.stop(); bgMediaPlayer.dispose(); } catch (Exception ignored) {}
+            bgMediaPlayer = null;
+        }
     }
 
-    // ---------- авто-запуск ----------
+    // ============================================================
+    // LAYOUT
+    // ============================================================
+
+    private void applyLayout() {
+        String layout = cfg.buttonLayout == null ? "TOP" : cfg.buttonLayout;
+        boolean logInSeparate = logInSeparateWindow();
+
+        detachAll(titleLabel, statusLabel, nickField, passField, loginBtn, logoutBtn,
+                oauthBtn, msBtn, openFolder, checkUpd, settingsBtn,
+                minimizeBox, autoLaunchBox, versionBox, playBtn, progressBar);
+        if (!logInSeparate) detachAll(log);
+
+        contentHolder.getChildren().clear();
+
+        HBox titleRow = new HBox(12, titleLabel, statusLabel);
+        titleRow.setAlignment(Pos.CENTER_LEFT);
+
+        if ("LEFT".equals(layout)) {
+            VBox sidebar = new VBox(8,
+                    nickField, passField,
+                    new Separator(),
+                    loginBtn, logoutBtn,
+                    new Separator(),
+                    oauthBtn, msBtn, openFolder, checkUpd, settingsBtn,
+                    new Separator(),
+                    minimizeBox, autoLaunchBox);
+            sidebar.setPrefWidth(230);
+            sidebar.setMinWidth(200);
+
+            HBox playRow = new HBox(8, new Label("версия:"), versionBox, playBtn, progressBar);
+            playRow.setAlignment(Pos.CENTER_LEFT);
+            HBox.setHgrow(versionBox, Priority.ALWAYS);
+
+            VBox right = new VBox(10, titleRow, playRow);
+            HBox.setHgrow(right, Priority.ALWAYS);
+
+            if (!logInSeparate && !Boolean.FALSE.equals(cfg.showLog)) {
+                right.getChildren().addAll(new Label("лог:"), log);
+                VBox.setVgrow(log, Priority.ALWAYS);
+            }
+
+            HBox h = new HBox(10, sidebar, right);
+            VBox.setVgrow(h, Priority.ALWAYS);
+            contentHolder.getChildren().add(h);
+        } else {
+            HBox authRow = new HBox(8, nickField, passField, loginBtn, logoutBtn);
+            authRow.setAlignment(Pos.CENTER_LEFT);
+            HBox.setHgrow(nickField, Priority.ALWAYS);
+            HBox.setHgrow(passField, Priority.ALWAYS);
+
+            FlowPane actionRow = new FlowPane(8, 8, oauthBtn, msBtn, openFolder, checkUpd, settingsBtn);
+            actionRow.setPrefWrapLength(700);
+
+            FlowPane optsRow = new FlowPane(16, 8, minimizeBox, autoLaunchBox);
+
+            HBox playRow = new HBox(8, new Label("версия:"), versionBox, playBtn, progressBar);
+            playRow.setAlignment(Pos.CENTER_LEFT);
+            HBox.setHgrow(versionBox, Priority.ALWAYS);
+
+            contentHolder.getChildren().addAll(titleRow, authRow, actionRow, optsRow, new Separator(), playRow);
+
+            if (!logInSeparate && !Boolean.FALSE.equals(cfg.showLog)) {
+                contentHolder.getChildren().addAll(new Label("лог:"), log);
+                VBox.setVgrow(log, Priority.ALWAYS);
+            }
+        }
+
+        log.setOpacity(cfg.logOpacity != null ? cfg.logOpacity : 1.0);
+    }
+
+    private void detachAll(Node... nodes) {
+        for (Node n : nodes) {
+            if (n == null) continue;
+            Parent p = n.getParent();
+            if (p instanceof Pane pane) pane.getChildren().remove(n);
+        }
+    }
+
+    private boolean logInSeparateWindow() {
+        if (log.getScene() == null) return false;
+        Window w = log.getScene().getWindow();
+        return w != null && w != stage;
+    }
+
+    // ============================================================
+    // WINDOW MODE
+    // ============================================================
+
+    private void applySavedWindowMode() {
+        String mode = cfg.windowMode == null ? "WINDOWED" : cfg.windowMode;
+        switch (mode) {
+            case "FULLSCREEN" -> stage.setFullScreen(true);
+            case "MAXIMIZED"  -> stage.setMaximized(true);
+            default -> {}
+        }
+    }
+
+    private void applyWindowMode(String mode) {
+        if (mode == null) mode = "WINDOWED";
+        switch (mode) {
+            case "FULLSCREEN" -> { stage.setMaximized(false); stage.setFullScreen(true); }
+            case "MAXIMIZED"  -> { stage.setFullScreen(false); stage.setMaximized(true); }
+            default           -> { stage.setFullScreen(false); stage.setMaximized(false); }
+        }
+    }
+
+    // ============================================================
+    // BACKGROUND
+    // ============================================================
+
+    private void rebuildBgLayer() {
+        if (bgMediaPlayer != null) {
+            try { bgMediaPlayer.stop(); bgMediaPlayer.dispose(); } catch (Exception ignored) {}
+            bgMediaPlayer = null;
+        }
+        bgMediaView.setMediaPlayer(null);
+        bgMediaView.setVisible(false);
+        bgImageView.setVisible(false);
+        bgImageView.setImage(null);
+
+        if (cfg.bgImagePath == null || !Files.exists(Path.of(cfg.bgImagePath))) return;
+
+        String lower = cfg.bgImagePath.toLowerCase();
+        double opacity = cfg.bgOpacity != null ? cfg.bgOpacity : 0.55;
+
+        if (lower.endsWith(".mp4") || lower.endsWith(".flv") || lower.endsWith(".m4v")) {
+            try {
+                Media m = new Media(Path.of(cfg.bgImagePath).toUri().toString());
+                bgMediaPlayer = new MediaPlayer(m);
+                bgMediaPlayer.setCycleCount(MediaPlayer.INDEFINITE);
+                bgMediaPlayer.setMute(true);
+                bgMediaPlayer.setOnError(() ->
+                        logLine("⚠ видео-фон: " + bgMediaPlayer.getError().getMessage()));
+                bgMediaPlayer.play();
+                bgMediaView.setMediaPlayer(bgMediaPlayer);
+                bgMediaView.setOpacity(opacity);
+                bgMediaView.setVisible(true);
+            } catch (Exception e) {
+                logLine("⚠ не смог загрузить видео-фон: " + e.getMessage());
+            }
+        } else {
+            try {
+                Image img = new Image(Path.of(cfg.bgImagePath).toUri().toString(), true);
+                bgImageView.setImage(img);
+                bgImageView.setOpacity(opacity);
+                bgImageView.setVisible(true);
+            } catch (Exception e) {
+                logLine("⚠ не смог загрузить картинку-фон: " + e.getMessage());
+            }
+        }
+    }
+
+    private void setBgOpacity(double alpha) {
+        bgImageView.setOpacity(alpha);
+        bgMediaView.setOpacity(alpha);
+    }
+
+    private void updateTint() {
+        tintLayer.setStyle("-fx-background-color: rgba(0,0,0,"
+                + (Boolean.TRUE.equals(cfg.darkMode) ? 0.35 : 0.15) + ");");
+    }
+
+    // ============================================================
+    // SETTINGS
+    // ============================================================
+
+    private void openSettings() {
+        Stage s = new Stage();
+        s.initOwner(stage);
+        s.initModality(Modality.APPLICATION_MODAL);
+        s.setTitle("Настройки");
+
+        Label head = new Label("Настройки лаунчера");
+        head.getStyleClass().add("title-label");
+        head.setStyle("-fx-font-size: 16px;");
+
+        ComboBox<String> themeCombo = new ComboBox<>(FXCollections.observableArrayList(ThemeManager.listPresets()));
+        themeCombo.setValue(cfg.theme != null ? cfg.theme : "WormGreen");
+        themeCombo.setPrefWidth(240);
+
+        CheckBox darkBox = new CheckBox("тёмная тема");
+        darkBox.setSelected(Boolean.TRUE.equals(cfg.darkMode));
+
+        ComboBox<String> layoutCombo = new ComboBox<>(FXCollections.observableArrayList("TOP", "LEFT"));
+        layoutCombo.setValue(cfg.buttonLayout != null ? cfg.buttonLayout : "TOP");
+        layoutCombo.setPrefWidth(180);
+
+        // background
+        Label bgPath = new Label(cfg.bgImagePath == null ? "не выбрано" : cfg.bgImagePath);
+        bgPath.getStyleClass().add("subtitle-label");
+        bgPath.setWrapText(true);
+        Button pickBg = new Button("Выбрать...");
+        Button clearBg = new Button("Убрать");
+
+        Slider bgOpacity = new Slider(0.0, 1.0, cfg.bgOpacity != null ? cfg.bgOpacity : 0.55);
+        bgOpacity.setShowTickMarks(true);
+        bgOpacity.setMajorTickUnit(0.25);
+        Label opacityLbl = new Label("Прозрачность фона: " + Math.round(bgOpacity.getValue() * 100) + "%");
+        bgOpacity.valueProperty().addListener((o, a, b) -> {
+            cfg.bgOpacity = b.doubleValue();
+            setBgOpacity(cfg.bgOpacity);
+            opacityLbl.setText("Прозрачность фона: " + Math.round(cfg.bgOpacity * 100) + "%");
+        });
+
+        pickBg.setOnAction(e -> {
+            FileChooser fc = new FileChooser();
+            fc.getExtensionFilters().addAll(
+                    new FileChooser.ExtensionFilter("Картинки и видео",
+                            "*.png", "*.jpg", "*.jpeg", "*.gif", "*.bmp",
+                            "*.mp4", "*.flv", "*.m4v"),
+                    new FileChooser.ExtensionFilter("Картинки", "*.png", "*.jpg", "*.jpeg", "*.gif", "*.bmp"),
+                    new FileChooser.ExtensionFilter("Видео", "*.mp4", "*.flv", "*.m4v"),
+                    new FileChooser.ExtensionFilter("Все файлы", "*.*")
+            );
+            java.io.File f = fc.showOpenDialog(s);
+            if (f != null) {
+                cfg.bgImagePath = f.getAbsolutePath();
+                bgPath.setText(cfg.bgImagePath);
+                rebuildBgLayer();
+            }
+        });
+        clearBg.setOnAction(e -> {
+            cfg.bgImagePath = null;
+            bgPath.setText("не выбрано");
+            rebuildBgLayer();
+        });
+
+        // window mode
+        ToggleGroup wmGroup = new ToggleGroup();
+        RadioButton wmWindowed   = new RadioButton("Оконный");
+        RadioButton wmMaximized  = new RadioButton("Развёрнутый");
+        RadioButton wmFullscreen = new RadioButton("Полноэкранный");
+        wmWindowed.setToggleGroup(wmGroup);
+        wmMaximized.setToggleGroup(wmGroup);
+        wmFullscreen.setToggleGroup(wmGroup);
+
+        String initialMode = cfg.windowMode == null ? "WINDOWED" : cfg.windowMode;
+        switch (initialMode) {
+            case "MAXIMIZED"  -> wmMaximized.setSelected(true);
+            case "FULLSCREEN" -> wmFullscreen.setSelected(true);
+            default           -> wmWindowed.setSelected(true);
+        }
+        HBox wmRow = new HBox(16, wmWindowed, wmMaximized, wmFullscreen);
+
+        // log
+        CheckBox showLogBox = new CheckBox("показывать лог в главном окне");
+        showLogBox.setSelected(!Boolean.FALSE.equals(cfg.showLog));
+
+        Slider logOpacity = new Slider(0.2, 1.0, cfg.logOpacity != null ? cfg.logOpacity : 1.0);
+        logOpacity.setShowTickMarks(true);
+        logOpacity.setMajorTickUnit(0.2);
+        Label logOpLbl = new Label("Прозрачность лога: " + Math.round(logOpacity.getValue() * 100) + "%");
+        logOpacity.valueProperty().addListener((o, a, b) -> {
+            cfg.logOpacity = b.doubleValue();
+            log.setOpacity(cfg.logOpacity);
+            logOpLbl.setText("Прозрачность лога: " + Math.round(cfg.logOpacity * 100) + "%");
+        });
+
+        Button openLogBtn = new Button("Открыть лог в отдельном окне");
+        openLogBtn.setOnAction(e -> {
+            openLogWindow();
+            s.close();
+        });
+
+        // buttons
+        Button okBtn = new Button("Применить");
+        okBtn.getStyleClass().add("play-button");
+        Button cancelBtn = new Button("Отмена");
+        HBox btnRow = new HBox(8, okBtn, cancelBtn);
+        btnRow.setAlignment(Pos.CENTER_RIGHT);
+
+        final String oldMode = initialMode;
+
+        okBtn.setOnAction(e -> {
+            cfg.theme = themeCombo.getValue();
+            cfg.darkMode = darkBox.isSelected();
+            cfg.showLog = showLogBox.isSelected();
+            cfg.buttonLayout = layoutCombo.getValue();
+
+            String newMode;
+            if (wmFullscreen.isSelected())      newMode = "FULLSCREEN";
+            else if (wmMaximized.isSelected())  newMode = "MAXIMIZED";
+            else                                newMode = "WINDOWED";
+
+            boolean modeChanged = !newMode.equals(oldMode);
+            cfg.windowMode = newMode;
+            Config.save(cfg);
+
+            for (Window w : Stage.getWindows()) {
+                if (w instanceof Stage st && st.getScene() != null) {
+                    ThemeManager.apply(st.getScene(), cfg);
+                }
+            }
+            updateTint();
+
+            if (modeChanged) applyWindowMode(cfg.windowMode);
+
+            // пересобираем layout ВСЕГДА — подхватывает showLog и buttonLayout
+            applyLayout();
+
+            s.close();
+        });
+        cancelBtn.setOnAction(e -> s.close());
+
+        VBox panel = new VBox(10,
+                head,
+                new Separator(),
+                new Label("Тема"), themeCombo,
+                darkBox,
+                new Label("Расположение кнопок"), layoutCombo,
+                new Separator(),
+                new Label("Фон (картинка / gif / видео)"), bgPath, new HBox(8, pickBg, clearBg),
+                opacityLbl, bgOpacity,
+                new Separator(),
+                new Label("Режим окна"), wmRow,
+                new Separator(),
+                new Label("Лог"), showLogBox,
+                logOpLbl, logOpacity,
+                new HBox(8, openLogBtn),
+                new Separator(),
+                btnRow
+        );
+        panel.getStyleClass().add("settings-panel");
+        panel.setPadding(new Insets(20));
+        panel.setPrefWidth(520);
+
+        ScrollPane scroll = new ScrollPane(panel);
+        scroll.setFitToWidth(true);
+        scroll.setPrefViewportHeight(640);
+        scroll.setStyle("-fx-background-color: transparent;");
+        scroll.getStyleClass().add("settings-scroll");
+
+        Scene scene = new Scene(scroll, 560, 680);
+        scene.getStylesheets().add(getClass().getResource("/styles.css").toExternalForm());
+        ThemeManager.apply(scene, cfg);
+
+        s.setScene(scene);
+        s.showAndWait();
+    }
+
+    // ============================================================
+    // LOG WINDOW
+    // ============================================================
+
+    private void openLogWindow() {
+        if (logInSeparateWindow()) return;
+
+        if (log.getParent() instanceof Pane p) p.getChildren().remove(log);
+        applyLayout();
+
+        Stage logStage = new Stage();
+        logStage.initOwner(stage);
+        logStage.setTitle("worm launcher — лог");
+        logStage.getIcons().add(makeIcon());
+
+        VBox box = new VBox(log);
+        box.setPadding(new Insets(8));
+        VBox.setVgrow(log, Priority.ALWAYS);
+        VBox.setVgrow(box, Priority.ALWAYS);
+
+        Scene sc = new Scene(box, 640, 400);
+        sc.getStylesheets().add(getClass().getResource("/styles.css").toExternalForm());
+        ThemeManager.apply(sc, cfg);
+
+        logStage.setScene(sc);
+        logStage.setOnCloseRequest(e -> {
+            box.getChildren().remove(log);
+            applyLayout();
+        });
+        logStage.show();
+    }
+
+    // ============================================================
+    // GAME LAUNCH
+    // ============================================================
+
     private void maybeAutoLaunch(boolean enabled) {
-        if (!enabled) return;
-        if (session == null) return;
-        if (versionBox.getValue() == null) return;
-        if (playBtn.isDisabled()) return;
+        if (!enabled || session == null || versionBox.getValue() == null || playBtn.isDisabled()) return;
         logLine("→ авто-запуск MC включён, стартую...");
         startGame();
     }
 
-    // ---------- запуск игры ----------
     private void startGame() {
         if (session == null) { logLine("✗ сначала войди"); return; }
         String ver = versionBox.getValue();
@@ -411,8 +778,7 @@ public class LauncherApp extends Application {
         progressBar.setProgress(0);
         logLine("→ запуск Minecraft " + ver + " (" + session.type() + ") ...");
 
-        final boolean hiddenToTray =
-                trayReady && Boolean.TRUE.equals(cfg.minimizeOnPlay);
+        final boolean hiddenToTray = trayReady && Boolean.TRUE.equals(cfg.minimizeOnPlay);
         if (hiddenToTray) {
             stage.hide();
             trayIcon.displayMessage("worm launcher",
@@ -424,11 +790,9 @@ public class LauncherApp extends Application {
             try {
                 updateLauncherPresence("launching MC " + ver);
                 stopLauncherRpc();
-
                 Process p = GameLauncher.launch(session, ver, pct ->
                         Platform.runLater(() -> progressBar.setProgress(pct)));
                 int code = p.waitFor();
-
                 initLauncherRpc();
                 Platform.runLater(() -> {
                     refreshLauncherPresenceImages();
@@ -452,12 +816,10 @@ public class LauncherApp extends Application {
         }, "mc-launch").start();
     }
 
-    // ---------- статус ----------
     private void setStatus(String text, boolean ok) {
         statusLabel.setText("● " + text);
-        statusLabel.setStyle(ok
-                ? "-fx-text-fill: #4caf50; -fx-font-size: 11px;"
-                : "-fx-text-fill: #8a8a8a; -fx-font-size: 11px;");
+        statusLabel.getStyleClass().remove("dim");
+        if (!ok) statusLabel.getStyleClass().add("dim");
     }
 
     private void restoreWindow() {
@@ -467,13 +829,15 @@ public class LauncherApp extends Application {
         stage.requestFocus();
     }
 
-    // ---------- трей ----------
+    // ============================================================
+    // TRAY
+    // ============================================================
+
     private void setupTray() {
         if (!SystemTray.isSupported()) return;
         try {
             SystemTray tray = SystemTray.getSystemTray();
             BufferedImage awtIcon = toAwt(makeIcon());
-
             PopupMenu menu = new PopupMenu();
             MenuItem show = new MenuItem("Открыть");
             show.addActionListener(e -> Platform.runLater(this::restoreWindow));
@@ -482,13 +846,15 @@ public class LauncherApp extends Application {
                 tray.remove(trayIcon);
                 Config.save(cfg);
                 stopLauncherRpc();
+                if (bgMediaPlayer != null) {
+                    try { bgMediaPlayer.stop(); bgMediaPlayer.dispose(); } catch (Exception ignored) {}
+                }
                 Platform.exit();
                 System.exit(0);
             });
             menu.add(show);
             menu.addSeparator();
             menu.add(quit);
-
             trayIcon = new TrayIcon(awtIcon, "worm launcher", menu);
             trayIcon.setImageAutoSize(true);
             trayIcon.addActionListener(e -> Platform.runLater(this::restoreWindow));
@@ -500,7 +866,6 @@ public class LauncherApp extends Application {
         }
     }
 
-    // ---------- иконка ----------
     private Image makeIcon() {
         int size = 64;
         WritableImage img = new WritableImage(size, size);
@@ -508,7 +873,7 @@ public class LauncherApp extends Application {
         Color body   = Color.web("#4caf50");
         Color border = Color.web("#2e7d32");
         double cx = size / 2.0, cy = size / 2.0;
-        for (int y = 0; y < size; y++) {
+        for (int y = 0; y < size; y++)
             for (int x = 0; x < size; x++) {
                 double dx = x - cx, dy = y - cy;
                 double d = Math.sqrt(dx * dx + dy * dy);
@@ -517,11 +882,8 @@ public class LauncherApp extends Application {
                     pw.setColor(x, y, body.interpolate(border, ring * 0.6));
                 } else if (d < 29) {
                     pw.setColor(x, y, border);
-                } else {
-                    pw.setColor(x, y, Color.TRANSPARENT);
-                }
+                } else pw.setColor(x, y, Color.TRANSPARENT);
             }
-        }
         return img;
     }
 
@@ -529,35 +891,30 @@ public class LauncherApp extends Application {
         int w = (int) img.getWidth(), h = (int) img.getHeight();
         BufferedImage out = new BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB);
         PixelReader pr = img.getPixelReader();
-        for (int y = 0; y < h; y++)
-            for (int x = 0; x < w; x++)
-                out.setRGB(x, y, pr.getArgb(x, y));
+        for (int y = 0; y < h; y++) for (int x = 0; x < w; x++) out.setRGB(x, y, pr.getArgb(x, y));
         return out;
     }
 
     private void logLine(String s) { log.appendText(s + System.lineSeparator()); }
 
     // ============================================================
-    // Discord RPC
+    // DISCORD RPC
     // ============================================================
 
     private void initLauncherRpc() {
         if (rpcStarted) return;
         rpcStarted = true;
-
         new Thread(() -> {
             try {
                 rpc = DiscordRPC.INSTANCE;
                 DiscordEventHandlers handlers = new DiscordEventHandlers();
                 rpc.Discord_Initialize(DISCORD_APP_ID, handlers, true, "");
-
                 presence = new DiscordRichPresence();
                 presence.startTimestamp = System.currentTimeMillis() / 1000L;
                 presence.details = "worm launcher — выбор версии";
                 presence.state = session != null ? "logged in as " + session.username() : "idle";
                 presence.largeImageKey = DISCORD_LARGE_IMAGE;
                 presence.largeImageText = "worm launcher v" + LAUNCHER_VERSION;
-
                 String nick = session != null ? session.username() : cfg.lastNick;
                 if (nick != null && !nick.isBlank()) {
                     String url = resolveHeadUrl(nick, session);
@@ -566,9 +923,7 @@ public class LauncherApp extends Application {
                         presence.smallImageText = "logged as " + nick;
                     }
                 }
-
                 rpc.Discord_UpdatePresence(presence);
-
                 rpcThread = new Thread(() -> {
                     while (rpcStarted && !Thread.currentThread().isInterrupted()) {
                         try { rpc.Discord_RunCallbacks(); } catch (Exception ignored) {}
@@ -577,7 +932,6 @@ public class LauncherApp extends Application {
                 }, "Launcher-RPC");
                 rpcThread.setDaemon(true);
                 rpcThread.start();
-
                 Platform.runLater(() -> logLine("✓ Discord RPC активен"));
             } catch (Exception e) {
                 Platform.runLater(() -> logLine("⚠ RPC не поднялся: " + e.getMessage()));
@@ -601,7 +955,6 @@ public class LauncherApp extends Application {
             return;
         }
         final GameSession sess = session;
-
         new Thread(() -> {
             String url = resolveHeadUrl(nick, sess);
             if (url == null || url.isEmpty()) return;
@@ -614,27 +967,15 @@ public class LauncherApp extends Application {
 
     private static void stopLauncherRpc() {
         rpcStarted = false;
-        if (rpcThread != null) {
-            rpcThread.interrupt();
-            rpcThread = null;
-        }
+        if (rpcThread != null) { rpcThread.interrupt(); rpcThread = null; }
     }
 
-    // ============================================================
-    // Голова
-    // ============================================================
-
     private String resolveHeadUrl(String nick, GameSession sess) {
-        if (sess != null && sess.isMojang()) {
-            return "https://mc-heads.net/avatar/" + nick + "/64";
-        }
-
+        if (sess != null && sess.isMojang()) return "https://mc-heads.net/avatar/" + nick + "/64";
         String cached = headUrlCache.get(nick);
         if (cached != null) return cached;
-
         byte[] png = headPngCache.computeIfAbsent(nick, this::renderElyHeadPng);
         if (png == null) return "";
-
         String url = uploadHead(png, nick);
         if (url != null && !url.isEmpty()) {
             headUrlCache.put(nick, url);
@@ -642,45 +983,35 @@ public class LauncherApp extends Application {
             Platform.runLater(() -> logLine("✓ голова " + nick + " → " + u));
             return url;
         }
-
         String fallback = "https://skinsystem.ely.by/skins/" + nick + ".png";
         headUrlCache.put(nick, fallback);
-        Platform.runLater(() -> logLine("⚠ аплоадеры не сработали, использую скин напрямую: " + fallback));
+        Platform.runLater(() -> logLine("⚠ аплоадеры не сработали, использую скин: " + fallback));
         return fallback;
     }
 
     private String uploadHead(byte[] png, String nick) {
         String u;
-        u = tryImgbb(png, nick);
-        if (u != null) return u;
-        u = tryCatbox(png, nick);
-        if (u != null) return u;
-        u = tryLitterbox(png, nick);
-        if (u != null) return u;
-        u = try0x0(png, nick);
-        if (u != null) return u;
-        u = tryTmpfiles(png, nick);
-        return u;
+        u = tryImgbb(png, nick);    if (u != null) return u;
+        u = tryCatbox(png, nick);   if (u != null) return u;
+        u = tryLitterbox(png, nick);if (u != null) return u;
+        u = try0x0(png, nick);      if (u != null) return u;
+        u = tryTmpfiles(png, nick); return u;
     }
 
     private byte[] renderElyHeadPng(String nick) {
         BufferedImage skin = fetchElySkin(nick);
         if (skin == null) return null;
-
         int scale = 8;
         BufferedImage head = new BufferedImage(8 * scale, 8 * scale, BufferedImage.TYPE_INT_ARGB);
-
-        for (int y = 0; y < 8; y++) {
+        for (int y = 0; y < 8; y++)
             for (int x = 0; x < 8; x++) {
                 int rgb = skin.getRGB(8 + x, 8 + y);
                 for (int dy = 0; dy < scale; dy++)
                     for (int dx = 0; dx < scale; dx++)
                         head.setRGB(x * scale + dx, y * scale + dy, rgb);
             }
-        }
-
         if (skin.getHeight() >= 64) {
-            for (int y = 0; y < 8; y++) {
+            for (int y = 0; y < 8; y++)
                 for (int x = 0; x < 8; x++) {
                     int rgb = skin.getRGB(40 + x, 8 + y);
                     int alpha = (rgb >> 24) & 0xFF;
@@ -690,17 +1021,12 @@ public class LauncherApp extends Application {
                                 head.setRGB(x * scale + dx, y * scale + dy, rgb);
                     }
                 }
-            }
         }
-
         try {
             ByteArrayOutputStream baos = new ByteArrayOutputStream();
             ImageIO.write(head, "png", baos);
             return baos.toByteArray();
-        } catch (Exception e) {
-            Platform.runLater(() -> logLine("⚠ png-write " + nick + ": " + e.getMessage()));
-            return null;
-        }
+        } catch (Exception e) { return null; }
     }
 
     private BufferedImage fetchElySkin(String nick) {
@@ -709,8 +1035,8 @@ public class LauncherApp extends Application {
                 "https://skinsystem.ely.by/textures/" + nick,
                 "http://skinsystem.ely.by/skins/" + nick + ".png"
         };
-        for (String candidate : candidates) {
-            BufferedImage img = fetchImageFollowingRedirects(candidate, nick, 5);
+        for (String c : candidates) {
+            BufferedImage img = fetchImageFollowingRedirects(c, nick, 5);
             if (img != null && img.getWidth() >= 64 && img.getHeight() >= 32) return img;
         }
         return null;
@@ -726,18 +1052,11 @@ public class LauncherApp extends Application {
                 conn.setInstanceFollowRedirects(false);
                 conn.setConnectTimeout(5000);
                 conn.setReadTimeout(5000);
-                conn.setRequestProperty("User-Agent",
-                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) worm-launcher/" + LAUNCHER_VERSION);
-                conn.setRequestProperty("Accept", "image/png,image/*;q=0.8,*/*;q=0.5");
-
+                conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) worm-launcher/" + LAUNCHER_VERSION);
                 int code = conn.getResponseCode();
                 if (code >= 300 && code < 400) {
                     String loc = conn.getHeaderField("Location");
-                    if (loc == null || loc.isEmpty()) {
-                        final int c = code;
-                        Platform.runLater(() -> logLine("⚠ " + nick + ": " + c + " без Location"));
-                        return null;
-                    }
+                    if (loc == null || loc.isEmpty()) return null;
                     if (loc.startsWith("/")) {
                         URL base = new URL(current);
                         loc = base.getProtocol() + "://" + base.getHost()
@@ -746,28 +1065,13 @@ public class LauncherApp extends Application {
                     current = loc;
                     continue;
                 }
-
-                if (code != 200) {
-                    final int c = code;
-                    Platform.runLater(() -> logLine("⚠ скин " + nick + ": HTTP " + c));
-                    return null;
-                }
-
-                try (InputStream in = conn.getInputStream()) {
-                    return ImageIO.read(in);
-                }
-            } catch (Exception e) {
-                Platform.runLater(() -> logLine("⚠ скин " + nick + ": " + e.getMessage()));
-                return null;
-            } finally {
-                if (conn != null) conn.disconnect();
-            }
+                if (code != 200) return null;
+                try (InputStream in = conn.getInputStream()) { return ImageIO.read(in); }
+            } catch (Exception e) { return null; }
+            finally { if (conn != null) conn.disconnect(); }
         }
-        Platform.runLater(() -> logLine("⚠ скин " + nick + ": слишком много редиректов"));
         return null;
     }
-
-    // ---------- uploaders ----------
 
     private String tryImgbb(byte[] png, String nick) {
         try {
@@ -779,44 +1083,27 @@ public class LauncherApp extends Application {
             conn.setConnectTimeout(15000);
             conn.setReadTimeout(15000);
             conn.setRequestProperty("Content-Type", "multipart/form-data; boundary=" + boundary);
-            conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) worm-launcher/" + LAUNCHER_VERSION);
-
             String head = "--" + boundary + "\r\n"
-                    + "Content-Disposition: form-data; name=\"image\"; filename=\""
-                    + nick + ".png\"\r\n"
+                    + "Content-Disposition: form-data; name=\"image\"; filename=\"" + nick + ".png\"\r\n"
                     + "Content-Type: image/png\r\n\r\n";
             String tail = "\r\n--" + boundary + "--\r\n";
-
             try (OutputStream out = conn.getOutputStream()) {
                 out.write(head.getBytes(StandardCharsets.UTF_8));
                 out.write(png);
                 out.write(tail.getBytes(StandardCharsets.UTF_8));
             }
-
-            int code = conn.getResponseCode();
-            if (code != 200) {
-                final int c = code;
-                Platform.runLater(() -> logLine("  imgbb: HTTP " + c));
-                return null;
-            }
+            if (conn.getResponseCode() != 200) return null;
             try (InputStream in = conn.getInputStream()) {
                 String result = new String(in.readAllBytes(), StandardCharsets.UTF_8);
                 int idx = result.indexOf("\"url\":\"");
-                if (idx < 0) {
-                    Platform.runLater(() -> logLine("  imgbb ответ: " + result));
-                    return null;
-                }
+                if (idx < 0) return null;
                 int start = idx + 7;
                 int end = result.indexOf('"', start);
                 if (end < 0) return null;
-
                 String u = result.substring(start, end).replace("\\/", "/");
                 if (u.startsWith("https://i.ibb.co/")) return u;
-                Platform.runLater(() -> logLine("  imgbb url: " + u));
             }
-        } catch (Exception e) {
-            Platform.runLater(() -> logLine("  imgbb: " + e.getMessage()));
-        }
+        } catch (Exception ignored) {}
         return null;
     }
 
@@ -830,37 +1117,20 @@ public class LauncherApp extends Application {
             conn.setConnectTimeout(15000);
             conn.setReadTimeout(15000);
             conn.setRequestProperty("Content-Type", "multipart/form-data; boundary=" + boundary);
-            conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) worm-launcher/" + LAUNCHER_VERSION);
-
-            String head = "--" + boundary + "\r\n"
-                    + "Content-Disposition: form-data; name=\"reqtype\"\r\n\r\n"
-                    + "fileupload\r\n"
-                    + "--" + boundary + "\r\n"
-                    + "Content-Disposition: form-data; name=\"fileToUpload\"; filename=\""
-                    + nick + ".png\"\r\n"
-                    + "Content-Type: image/png\r\n\r\n";
+            String head = "--" + boundary + "\r\nContent-Disposition: form-data; name=\"reqtype\"\r\n\r\nfileupload\r\n"
+                    + "--" + boundary + "\r\nContent-Disposition: form-data; name=\"fileToUpload\"; filename=\"" + nick + ".png\"\r\nContent-Type: image/png\r\n\r\n";
             String tail = "\r\n--" + boundary + "--\r\n";
-
             try (OutputStream out = conn.getOutputStream()) {
                 out.write(head.getBytes(StandardCharsets.UTF_8));
                 out.write(png);
                 out.write(tail.getBytes(StandardCharsets.UTF_8));
             }
-
-            int code = conn.getResponseCode();
-            if (code != 200) {
-                final int c = code;
-                Platform.runLater(() -> logLine("  catbox: HTTP " + c));
-                return null;
-            }
+            if (conn.getResponseCode() != 200) return null;
             try (InputStream in = conn.getInputStream()) {
-                String result = new String(in.readAllBytes(), StandardCharsets.UTF_8).trim();
-                if (result.startsWith("https://files.catbox.moe/")) return result;
-                Platform.runLater(() -> logLine("  catbox ответ: " + result));
+                String r = new String(in.readAllBytes(), StandardCharsets.UTF_8).trim();
+                if (r.startsWith("https://files.catbox.moe/")) return r;
             }
-        } catch (Exception e) {
-            Platform.runLater(() -> logLine("  catbox: " + e.getMessage()));
-        }
+        } catch (Exception ignored) {}
         return null;
     }
 
@@ -874,40 +1144,21 @@ public class LauncherApp extends Application {
             conn.setConnectTimeout(15000);
             conn.setReadTimeout(15000);
             conn.setRequestProperty("Content-Type", "multipart/form-data; boundary=" + boundary);
-            conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) worm-launcher/" + LAUNCHER_VERSION);
-
-            String head = "--" + boundary + "\r\n"
-                    + "Content-Disposition: form-data; name=\"reqtype\"\r\n\r\n"
-                    + "fileupload\r\n"
-                    + "--" + boundary + "\r\n"
-                    + "Content-Disposition: form-data; name=\"time\"\r\n\r\n"
-                    + "72h\r\n"
-                    + "--" + boundary + "\r\n"
-                    + "Content-Disposition: form-data; name=\"fileToUpload\"; filename=\""
-                    + nick + ".png\"\r\n"
-                    + "Content-Type: image/png\r\n\r\n";
+            String head = "--" + boundary + "\r\nContent-Disposition: form-data; name=\"reqtype\"\r\n\r\nfileupload\r\n"
+                    + "--" + boundary + "\r\nContent-Disposition: form-data; name=\"time\"\r\n\r\n72h\r\n"
+                    + "--" + boundary + "\r\nContent-Disposition: form-data; name=\"fileToUpload\"; filename=\"" + nick + ".png\"\r\nContent-Type: image/png\r\n\r\n";
             String tail = "\r\n--" + boundary + "--\r\n";
-
             try (OutputStream out = conn.getOutputStream()) {
                 out.write(head.getBytes(StandardCharsets.UTF_8));
                 out.write(png);
                 out.write(tail.getBytes(StandardCharsets.UTF_8));
             }
-
-            int code = conn.getResponseCode();
-            if (code != 200) {
-                final int c = code;
-                Platform.runLater(() -> logLine("  litterbox: HTTP " + c));
-                return null;
-            }
+            if (conn.getResponseCode() != 200) return null;
             try (InputStream in = conn.getInputStream()) {
-                String result = new String(in.readAllBytes(), StandardCharsets.UTF_8).trim();
-                if (result.startsWith("https://litter.catbox.moe/")) return result;
-                Platform.runLater(() -> logLine("  litterbox ответ: " + result));
+                String r = new String(in.readAllBytes(), StandardCharsets.UTF_8).trim();
+                if (r.startsWith("https://litter.catbox.moe/")) return r;
             }
-        } catch (Exception e) {
-            Platform.runLater(() -> logLine("  litterbox: " + e.getMessage()));
-        }
+        } catch (Exception ignored) {}
         return null;
     }
 
@@ -921,34 +1172,19 @@ public class LauncherApp extends Application {
             conn.setConnectTimeout(15000);
             conn.setReadTimeout(15000);
             conn.setRequestProperty("Content-Type", "multipart/form-data; boundary=" + boundary);
-            conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) worm-launcher/" + LAUNCHER_VERSION);
-
-            String head = "--" + boundary + "\r\n"
-                    + "Content-Disposition: form-data; name=\"file\"; filename=\""
-                    + nick + ".png\"\r\n"
-                    + "Content-Type: image/png\r\n\r\n";
+            String head = "--" + boundary + "\r\nContent-Disposition: form-data; name=\"file\"; filename=\"" + nick + ".png\"\r\nContent-Type: image/png\r\n\r\n";
             String tail = "\r\n--" + boundary + "--\r\n";
-
             try (OutputStream out = conn.getOutputStream()) {
                 out.write(head.getBytes(StandardCharsets.UTF_8));
                 out.write(png);
                 out.write(tail.getBytes(StandardCharsets.UTF_8));
             }
-
-            int code = conn.getResponseCode();
-            if (code != 200) {
-                final int c = code;
-                Platform.runLater(() -> logLine("  0x0.st: HTTP " + c));
-                return null;
-            }
+            if (conn.getResponseCode() != 200) return null;
             try (InputStream in = conn.getInputStream()) {
-                String result = new String(in.readAllBytes(), StandardCharsets.UTF_8).trim();
-                if (result.startsWith("https://")) return result;
-                Platform.runLater(() -> logLine("  0x0.st ответ: " + result));
+                String r = new String(in.readAllBytes(), StandardCharsets.UTF_8).trim();
+                if (r.startsWith("https://")) return r;
             }
-        } catch (Exception e) {
-            Platform.runLater(() -> logLine("  0x0.st: " + e.getMessage()));
-        }
+        } catch (Exception ignored) {}
         return null;
     }
 
@@ -962,41 +1198,23 @@ public class LauncherApp extends Application {
             conn.setConnectTimeout(15000);
             conn.setReadTimeout(15000);
             conn.setRequestProperty("Content-Type", "multipart/form-data; boundary=" + boundary);
-            conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) worm-launcher/" + LAUNCHER_VERSION);
-
-            String head = "--" + boundary + "\r\n"
-                    + "Content-Disposition: form-data; name=\"file\"; filename=\""
-                    + nick + ".png\"\r\n"
-                    + "Content-Type: image/png\r\n\r\n";
+            String head = "--" + boundary + "\r\nContent-Disposition: form-data; name=\"file\"; filename=\"" + nick + ".png\"\r\nContent-Type: image/png\r\n\r\n";
             String tail = "\r\n--" + boundary + "--\r\n";
-
             try (OutputStream out = conn.getOutputStream()) {
                 out.write(head.getBytes(StandardCharsets.UTF_8));
                 out.write(png);
                 out.write(tail.getBytes(StandardCharsets.UTF_8));
             }
-
-            int code = conn.getResponseCode();
-            if (code != 200) {
-                final int c = code;
-                Platform.runLater(() -> logLine("  tmpfiles: HTTP " + c));
-                return null;
-            }
+            if (conn.getResponseCode() != 200) return null;
             try (InputStream in = conn.getInputStream()) {
                 String result = new String(in.readAllBytes(), StandardCharsets.UTF_8);
                 int idx = result.indexOf("https://tmpfiles.org/");
-                if (idx < 0) {
-                    Platform.runLater(() -> logLine("  tmpfiles ответ: " + result));
-                    return null;
-                }
+                if (idx < 0) return null;
                 int end = idx;
                 while (end < result.length() && result.charAt(end) != '"' && result.charAt(end) != ' ') end++;
-                String raw = result.substring(idx, end);
-                return raw.replace("tmpfiles.org/", "tmpfiles.org/dl/");
+                return result.substring(idx, end).replace("tmpfiles.org/", "tmpfiles.org/dl/");
             }
-        } catch (Exception e) {
-            Platform.runLater(() -> logLine("  tmpfiles: " + e.getMessage()));
-        }
+        } catch (Exception ignored) {}
         return null;
     }
 

@@ -24,6 +24,7 @@ import launcher.auth.ElyOAuth;
 import launcher.auth.GameSession;
 import launcher.auth.MojangAuth;
 import launcher.auth.TokenStore;
+import launcher.mc.FabricInstaller;
 import launcher.mc.GameLauncher;
 import launcher.mc.VersionManifest;
 import thunder.hack.utility.discord.DiscordEventHandlers;
@@ -78,6 +79,8 @@ public class LauncherApp extends Application {
     private Button loginBtn, logoutBtn, oauthBtn, msBtn, openFolder, checkUpd, settingsBtn;
     private CheckBox minimizeBox, autoLaunchBox;
     private ComboBox<String> versionBox;
+    private ComboBox<String> loaderBox;       // Vanilla / Fabric
+    private ComboBox<String> fabricLoaderBox; // версии fabric-лоадера
     private Button playBtn;
     private ProgressBar progressBar;
     private TextArea log;
@@ -138,6 +141,17 @@ public class LauncherApp extends Application {
         versionBox.setPrefWidth(200);
         versionBox.setPromptText("загрузка версий...");
         versionBox.setDisable(true);
+
+        loaderBox = new ComboBox<>(FXCollections.observableArrayList("Vanilla", "Fabric"));
+        loaderBox.setValue("Vanilla");
+        loaderBox.setPrefWidth(120);
+
+        fabricLoaderBox = new ComboBox<>();
+        fabricLoaderBox.setPrefWidth(150);
+        fabricLoaderBox.setPromptText("лоадер...");
+        fabricLoaderBox.setDisable(true);
+        fabricLoaderBox.setVisible(false);
+        fabricLoaderBox.setManaged(false);
 
         playBtn = new Button("Играть");
         playBtn.getStyleClass().add("play-button");
@@ -243,6 +257,22 @@ public class LauncherApp extends Application {
 
         versionBox.valueProperty().addListener((obs, oldV, newV) -> {
             if (newV != null && !newV.isBlank()) { cfg.lastVersion = newV; Config.save(cfg); }
+            if ("Fabric".equals(loaderBox.getValue())) {
+                reloadFabricLoaders(newV);
+            }
+        });
+
+        loaderBox.valueProperty().addListener((obs, oldV, newV) -> {
+            boolean isFabric = "Fabric".equals(newV);
+            fabricLoaderBox.setVisible(isFabric);
+            fabricLoaderBox.setManaged(isFabric);
+            if (isFabric) {
+                reloadFabricLoaders(versionBox.getValue());
+            } else {
+                fabricLoaderBox.getItems().clear();
+                fabricLoaderBox.setDisable(true);
+            }
+            applyLayout();
         });
 
         loginBtn.setOnAction(e -> {
@@ -395,7 +425,8 @@ public class LauncherApp extends Application {
 
         detachAll(titleLabel, statusLabel, nickField, passField, loginBtn, logoutBtn,
                 oauthBtn, msBtn, openFolder, checkUpd, settingsBtn,
-                minimizeBox, autoLaunchBox, versionBox, playBtn, progressBar);
+                minimizeBox, autoLaunchBox, versionBox, loaderBox, fabricLoaderBox,
+                playBtn, progressBar);
         if (!logInSeparate) detachAll(log);
 
         contentHolder.getChildren().clear();
@@ -415,7 +446,10 @@ public class LauncherApp extends Application {
             sidebar.setPrefWidth(230);
             sidebar.setMinWidth(200);
 
-            HBox playRow = new HBox(8, new Label("версия:"), versionBox, playBtn, progressBar);
+            HBox playRow = new HBox(8,
+                    new Label("версия:"), versionBox,
+                    new Label("загрузчик:"), loaderBox, fabricLoaderBox,
+                    playBtn, progressBar);
             playRow.setAlignment(Pos.CENTER_LEFT);
             HBox.setHgrow(versionBox, Priority.ALWAYS);
 
@@ -441,7 +475,10 @@ public class LauncherApp extends Application {
 
             FlowPane optsRow = new FlowPane(16, 8, minimizeBox, autoLaunchBox);
 
-            HBox playRow = new HBox(8, new Label("версия:"), versionBox, playBtn, progressBar);
+            HBox playRow = new HBox(8,
+                    new Label("версия:"), versionBox,
+                    new Label("загрузчик:"), loaderBox, fabricLoaderBox,
+                    playBtn, progressBar);
             playRow.setAlignment(Pos.CENTER_LEFT);
             HBox.setHgrow(versionBox, Priority.ALWAYS);
 
@@ -759,6 +796,36 @@ public class LauncherApp extends Application {
     }
 
     // ============================================================
+    // FABRIC LOADERS
+    // ============================================================
+
+    private void reloadFabricLoaders(String mcVersion) {
+        if (mcVersion == null || mcVersion.isBlank()) return;
+        fabricLoaderBox.setDisable(true);
+        fabricLoaderBox.getItems().clear();
+        fabricLoaderBox.setPromptText("загрузка лоадеров...");
+        logLine("→ fabric loaders для " + mcVersion + " ...");
+
+        new Thread(() -> {
+            try {
+                List<String> loaders = VersionManifest.fetchFabricLoaders(mcVersion);
+                Platform.runLater(() -> {
+                    fabricLoaderBox.setItems(FXCollections.observableArrayList(loaders));
+                    if (!loaders.isEmpty()) fabricLoaderBox.setValue(loaders.get(0));
+                    fabricLoaderBox.setDisable(loaders.isEmpty());
+                    fabricLoaderBox.setPromptText(loaders.isEmpty() ? "нет лоадеров" : "лоадер...");
+                    logLine("✓ fabric лоадеров: " + loaders.size());
+                });
+            } catch (Exception ex) {
+                Platform.runLater(() -> {
+                    fabricLoaderBox.setPromptText("ошибка загрузки");
+                    logLine("✗ fabric loaders: " + ex.getMessage());
+                });
+            }
+        }, "fabric-loaders").start();
+    }
+
+    // ============================================================
     // GAME LAUNCH
     // ============================================================
 
@@ -773,10 +840,19 @@ public class LauncherApp extends Application {
         String ver = versionBox.getValue();
         if (ver == null || ver.isBlank()) { logLine("✗ выбери версию"); return; }
 
+        boolean isFabric = "Fabric".equals(loaderBox.getValue());
+        final String loaderVer = isFabric ? fabricLoaderBox.getValue() : null;
+        if (isFabric && (loaderVer == null || loaderVer.isBlank())) {
+            logLine("✗ выбери версию fabric-лоадера");
+            return;
+        }
+
         playBtn.setDisable(true);
         progressBar.setVisible(true);
         progressBar.setProgress(0);
-        logLine("→ запуск Minecraft " + ver + " (" + session.type() + ") ...");
+        logLine("→ запуск Minecraft " + ver
+                + (isFabric ? " (fabric " + loaderVer + ")" : "")
+                + " [" + session.type() + "] ...");
 
         final boolean hiddenToTray = trayReady && Boolean.TRUE.equals(cfg.minimizeOnPlay);
         if (hiddenToTray) {
@@ -790,8 +866,19 @@ public class LauncherApp extends Application {
             try {
                 updateLauncherPresence("launching MC " + ver);
                 stopLauncherRpc();
-                Process p = GameLauncher.launch(session, ver, pct ->
+
+                String launchId = ver;
+                if (isFabric) {
+                    Platform.runLater(() -> logLine("→ установка fabric-профиля ..."));
+                    launchId = FabricInstaller.install(GAME_DIR, ver, loaderVer);
+                    final String fid = launchId;
+                    Platform.runLater(() -> logLine("✓ fabric профиль: " + fid));
+                }
+
+                final String finalLaunchId = launchId;
+                Process p = GameLauncher.launch(session, finalLaunchId, pct ->
                         Platform.runLater(() -> progressBar.setProgress(pct)));
+
                 int code = p.waitFor();
                 initLauncherRpc();
                 Platform.runLater(() -> {

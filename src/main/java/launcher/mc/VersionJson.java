@@ -16,6 +16,8 @@ public class VersionJson {
     ) {}
 
     public final String id;
+    public final String inheritsFrom;
+    public final String jarVersionId;
     public final String mainClass;
     public final String assetIndexUrl;
     public final String assetIndexSha1;
@@ -24,20 +26,147 @@ public class VersionJson {
     public final Download loggingClient;
     public final List<Library> libraries;
 
-    private VersionJson(JsonObject o) {
-        id = o.get("id").getAsString();
-        mainClass = o.get("mainClass").getAsString();
+    private VersionJson(String id, String inheritsFrom, String jarVersionId, String mainClass,
+                        String assetIndexUrl, String assetIndexSha1, String assetIndexId,
+                        Download client, Download loggingClient, List<Library> libraries) {
+        this.id = id;
+        this.inheritsFrom = inheritsFrom;
+        this.jarVersionId = jarVersionId;
+        this.mainClass = mainClass;
+        this.assetIndexUrl = assetIndexUrl;
+        this.assetIndexSha1 = assetIndexSha1;
+        this.assetIndexId = assetIndexId;
+        this.client = client;
+        this.loggingClient = loggingClient;
+        this.libraries = libraries;
+    }
+
+    public static Path jsonPath(Path gameDir, String versionId) {
+        return gameDir.resolve("versions").resolve(versionId).resolve(versionId + ".json");
+    }
+
+    public static VersionJson load(Path gameDir, String versionId) throws Exception {
+        JsonObject child = readRaw(gameDir, versionId);
+
+        List<JsonObject> chain = new ArrayList<>();
+        JsonObject cur = child;
+        while (cur.has("inheritsFrom")) {
+            String parentId = cur.get("inheritsFrom").getAsString();
+            JsonObject parent = readRaw(gameDir, parentId);
+            chain.add(parent);
+            cur = parent;
+        }
+
+        JsonObject merged = new JsonObject();
+        for (int i = chain.size() - 1; i >= 0; i--) {
+            mergeOnto(merged, chain.get(i));
+        }
+        mergeOnto(merged, child);
+
+        String jarVersionId = versionId;
+        for (JsonObject p : chain) {
+            if (p.has("downloads") && p.getAsJsonObject("downloads").has("client")) {
+                jarVersionId = p.get("id").getAsString();
+                break;
+            }
+        }
+        if (jarVersionId.equals(versionId)
+                && child.has("downloads")
+                && child.getAsJsonObject("downloads").has("client")) {
+            jarVersionId = versionId;
+        }
+
+        String inheritsFrom = child.has("inheritsFrom") ? child.get("inheritsFrom").getAsString() : null;
+        return fromJson(versionId, inheritsFrom, jarVersionId, merged);
+    }
+
+    public static VersionJson parse(Path file) throws Exception {
+        Path versionDir = file.getParent();
+        Path versionsDir = versionDir.getParent();
+        Path gameDir = versionsDir.getParent();
+        String fileName = file.getFileName().toString();
+        String versionId = fileName.endsWith(".json")
+                ? fileName.substring(0, fileName.length() - 5)
+                : fileName;
+        return load(gameDir, versionId);
+    }
+
+    private static JsonObject readRaw(Path gameDir, String versionId) throws Exception {
+        Path p = jsonPath(gameDir, versionId);
+        if (!Files.exists(p)) throw new IllegalStateException("version.json не найден: " + p);
+        return JsonParser.parseString(Files.readString(p, StandardCharsets.UTF_8)).getAsJsonObject();
+    }
+
+    private static void mergeOnto(JsonObject target, JsonObject src) {
+        if (src.has("id")) target.add("id", src.get("id"));
+        if (src.has("mainClass")) target.add("mainClass", src.get("mainClass"));
+
+        for (String k : new String[]{"assetIndex", "downloads", "logging", "assets"}) {
+            if (src.has(k)) target.add(k, src.get(k));
+        }
+
+        if (src.has("libraries")) {
+            LinkedHashMap<String, JsonObject> map = new LinkedHashMap<>();
+            if (target.has("libraries")) {
+                for (JsonElement el : target.getAsJsonArray("libraries")) {
+                    JsonObject lib = el.getAsJsonObject();
+                    map.put(libKey(lib), lib);
+                }
+            }
+            for (JsonElement el : src.getAsJsonArray("libraries")) {
+                JsonObject lib = el.getAsJsonObject();
+                map.put(libKey(lib), lib);
+            }
+            JsonArray combined = new JsonArray();
+            for (JsonObject o : map.values()) combined.add(o);
+            target.add("libraries", combined);
+        }
+
+        for (String k : new String[]{"arguments", "minecraftArguments"}) {
+            if (src.has(k) && !target.has(k)) target.add(k, src.get(k));
+        }
+    }
+
+    /**
+     * Ключ для дедупа — ПОЛНОЕ maven-имя с classifier.
+     * Иначе natives-windows-x86 вытесняет основной lwjgl-glfw из merge
+     * и MC падает с NoClassDefFoundError: org/lwjgl/.../CallbackI.
+     */
+    private static String libKey(JsonObject lib) {
+        return lib.has("name") ? lib.get("name").getAsString() : "";
+    }
+
+    private static String mavenPath(String name) {
+        String[] p = name.split(":");
+        if (p.length < 3) return null;
+        String group = p[0].replace('.', '/');
+        String artifact = p[1];
+        String version = p[2];
+        String classifier = p.length >= 4 ? p[3] : null;
+        String file = artifact + "-" + version
+                + (classifier != null ? "-" + classifier : "") + ".jar";
+        return group + "/" + artifact + "/" + version + "/" + file;
+    }
+
+    private static VersionJson fromJson(String id, String inheritsFrom, String jarVersionId, JsonObject o) {
+        String mainClass = o.get("mainClass").getAsString();
 
         JsonObject idx = o.getAsJsonObject("assetIndex");
-        assetIndexUrl = idx.get("url").getAsString();
-        assetIndexSha1 = idx.has("sha1") ? idx.get("sha1").getAsString() : null;
-        assetIndexId = idx.get("id").getAsString();
+        String assetIndexUrl = idx.get("url").getAsString();
+        String assetIndexSha1 = idx.has("sha1") ? idx.get("sha1").getAsString() : null;
+        String assetIndexId = idx.get("id").getAsString();
 
-        JsonObject cl = o.getAsJsonObject("downloads").getAsJsonObject("client");
-        client = new Download(null,
-                cl.get("url").getAsString(),
-                cl.has("sha1") ? cl.get("sha1").getAsString() : null,
-                cl.has("size") ? cl.get("size").getAsLong() : -1);
+        Download client = null;
+        if (o.has("downloads")) {
+            JsonObject d = o.getAsJsonObject("downloads");
+            if (d.has("client")) {
+                JsonObject cl = d.getAsJsonObject("client");
+                client = new Download(null,
+                        cl.get("url").getAsString(),
+                        cl.has("sha1") ? cl.get("sha1").getAsString() : null,
+                        cl.has("size") ? cl.get("size").getAsLong() : -1);
+            }
+        }
 
         Download lc = null;
         if (o.has("logging")) {
@@ -50,44 +179,53 @@ public class VersionJson {
                         f.has("size") ? f.get("size").getAsLong() : -1);
             }
         }
-        loggingClient = lc;
 
         List<Library> libs = new ArrayList<>();
-        for (JsonElement e : o.getAsJsonArray("libraries")) {
-            JsonObject lo = e.getAsJsonObject();
-            String name = lo.get("name").getAsString();
+        if (o.has("libraries")) {
+            for (JsonElement e : o.getAsJsonArray("libraries")) {
+                JsonObject lo = e.getAsJsonObject();
+                String name = lo.get("name").getAsString();
 
-            Download art = null;
-            if (lo.has("downloads")) {
-                JsonObject d = lo.getAsJsonObject("downloads");
-                if (d.has("artifact")) {
-                    JsonObject a = d.getAsJsonObject("artifact");
-                    art = new Download(
-                            a.has("path") ? a.get("path").getAsString() : null,
-                            a.get("url").getAsString(),
-                            a.has("sha1") ? a.get("sha1").getAsString() : null,
-                            a.has("size") ? a.get("size").getAsLong() : -1);
+                Download art = null;
+                if (lo.has("downloads")) {
+                    JsonObject dd = lo.getAsJsonObject("downloads");
+                    if (dd.has("artifact")) {
+                        JsonObject a = dd.getAsJsonObject("artifact");
+                        art = new Download(
+                                a.has("path") ? a.get("path").getAsString() : null,
+                                a.get("url").getAsString(),
+                                a.has("sha1") ? a.get("sha1").getAsString() : null,
+                                a.has("size") ? a.get("size").getAsLong() : -1);
+                    }
                 }
-            }
-
-            Map<String, String> rules = new HashMap<>();
-            if (lo.has("rules")) {
-                for (JsonElement r : lo.getAsJsonArray("rules")) {
-                    JsonObject ro = r.getAsJsonObject();
-                    String action = ro.get("action").getAsString();
-                    String os = ro.has("os") && ro.getAsJsonObject("os").has("name")
-                            ? ro.getAsJsonObject("os").get("name").getAsString() : "any";
-                    rules.put(os, action);
+                if (art == null && lo.has("url")) {
+                    String mp = mavenPath(name);
+                    if (mp != null) {
+                        String base = lo.get("url").getAsString();
+                        if (!base.endsWith("/")) base += "/";
+                        art = new Download(
+                                mp,
+                                base + mp,
+                                lo.has("sha1") ? lo.get("sha1").getAsString() : null,
+                                lo.has("size") ? lo.get("size").getAsLong() : -1);
+                    }
                 }
-            }
 
-            libs.add(new Library(name, art, rules));
+                Map<String, String> rules = new HashMap<>();
+                if (lo.has("rules")) {
+                    for (JsonElement r : lo.getAsJsonArray("rules")) {
+                        JsonObject ro = r.getAsJsonObject();
+                        String action = ro.get("action").getAsString();
+                        String os = ro.has("os") && ro.getAsJsonObject("os").has("name")
+                                ? ro.getAsJsonObject("os").get("name").getAsString() : "any";
+                        rules.put(os, action);
+                    }
+                }
+                libs.add(new Library(name, art, rules));
+            }
         }
-        libraries = libs;
-    }
 
-    public static VersionJson parse(Path file) throws Exception {
-        return new VersionJson(JsonParser.parseString(
-                Files.readString(file, StandardCharsets.UTF_8)).getAsJsonObject());
+        return new VersionJson(id, inheritsFrom, jarVersionId, mainClass,
+                assetIndexUrl, assetIndexSha1, assetIndexId, client, lc, libs);
     }
 }

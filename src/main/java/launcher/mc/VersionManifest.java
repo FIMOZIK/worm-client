@@ -18,6 +18,9 @@ public class VersionManifest {
 
     private static List<Entry> cache = null;
 
+    /** Кеш fabric-лоадеров по mc-версии, чтобы UI не дёргал сеть на каждый клик. */
+    private static final Map<String, List<String>> FABRIC_CACHE = new HashMap<>();
+
     public static List<Entry> fetch() throws Exception {
         if (cache != null) return cache;
         HttpRequest req = HttpRequest.newBuilder(URI.create(URL))
@@ -54,5 +57,14 @@ public class VersionManifest {
         Path out = dir.resolve(e.id() + ".json");
         Downloader.download(e.url(), out, e.sha1());
         return out;
+    }
+
+    /** Обёртка для UI: список fabric-лоадеров под конкретную mc-версию (с кешем). */
+    public static synchronized List<String> fetchFabricLoaders(String mcVersion) throws Exception {
+        List<String> cached = FABRIC_CACHE.get(mcVersion);
+        if (cached != null) return cached;
+        List<String> fetched = FabricInstaller.fetchLoaders(mcVersion);
+        FABRIC_CACHE.put(mcVersion, fetched);
+        return fetched;
     }
 }

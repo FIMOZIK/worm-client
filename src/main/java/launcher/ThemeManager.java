@@ -28,11 +28,12 @@ public class ThemeManager {
     public record Preset(String name, Colors dark, Colors light) {}
 
     private static final List<Preset> PRESETS = List.of(
-            new Preset("WormGreen",
-                    new Colors("#4caf50", "#2e7d32", "#0e1f10", "#05080a",
-                            "#1a2a1c", "#22352a", "#264528", "#e0e0e0", "#8a9a8a", "#2f4a34"),
-                    new Colors("#2e7d32", "#1b5e20", "#e8f5e9", "#f1f8e9",
-                            "#f9fff9", "#eef7ee", "#dcefdc", "#1f2a20", "#5a6b5c", "#c8dcc9")),
+            // WormLauncher — цвета из логотипа: DarkBlue #00008B + LightSalmon #FFA07A
+            new Preset("WormLauncher",
+                    new Colors("#FFA07A", "#C97B5A", "#00008B", "#0a0a3a",
+                            "#14144a", "#1c1c5c", "#2a2a70", "#F5E8DC", "#9999BB", "#3a3a8a"),
+                    new Colors("#00008B", "#00006B", "#FFE0D0", "#FFC8B0",
+                            "#FFFFFF", "#FFF5F0", "#FFE0D0", "#1a1a2a", "#606080", "#D0B8B0")),
             new Preset("Cyberpunk",
                     new Colors("#ff00c8", "#00e0ff", "#1a0a24", "#05030a",
                             "#241230", "#2c1a3c", "#3a1f52", "#f0e8ff", "#9a8ab0", "#3a2a4a"),
@@ -70,7 +71,8 @@ public class ThemeManager {
     }
 
     public static Colors getColors(Config.Data cfg) {
-        String name = cfg.theme != null ? cfg.theme : "WormGreen";
+        // fallback: старые конфиги с "WormGreen" → автоматически подхватят "WormLauncher" (PRESETS.get(0))
+        String name = cfg.theme != null ? cfg.theme : "WormLauncher";
         Preset p = PRESETS.stream().filter(x -> x.name().equals(name)).findFirst().orElse(PRESETS.get(0));
         return Boolean.TRUE.equals(cfg.darkMode) ? p.dark() : p.light();
     }

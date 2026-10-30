@@ -11,7 +11,6 @@ import java.util.List;
 
 public class Config {
 
-    public static final Path FILE = Path.of("D:\\wormlauncher\\config.json");
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 
     public static class Data {
@@ -30,25 +29,28 @@ public class Config {
         public Boolean showLog;
         public String buttonLayout;
 
-        // приоритет 4 — кастомизация
         public List<Profile> profiles = new ArrayList<>();
         public String customFontPath;
         public Boolean soundsEnabled = true;
         public String keypressSoundPath;
-
-        // приоритет 5 — автообновление
         public Boolean autoCheckUpdates = true;
+
+        public String lang = Lang.RU;
     }
+
+    public static Path FILE() { return Paths.configFile(); }
 
     public static Data load() {
         try {
-            if (!Files.exists(FILE)) return new Data();
-            String s = Files.readString(FILE, StandardCharsets.UTF_8);
+            Path f = FILE();
+            if (!Files.exists(f)) return new Data();
+            String s = Files.readString(f, StandardCharsets.UTF_8);
             Data d = GSON.fromJson(s, Data.class);
             if (d == null) return new Data();
             if (d.profiles == null) d.profiles = new ArrayList<>();
             if (d.soundsEnabled == null) d.soundsEnabled = true;
             if (d.autoCheckUpdates == null) d.autoCheckUpdates = true;
+            if (d.lang == null) d.lang = Lang.RU;
             return d;
         } catch (Exception e) {
             return new Data();
@@ -57,8 +59,9 @@ public class Config {
 
     public static void save(Data d) {
         try {
-            Files.createDirectories(FILE.getParent());
-            Files.writeString(FILE, GSON.toJson(d), StandardCharsets.UTF_8);
+            Path f = FILE();
+            Files.createDirectories(f.getParent());
+            Files.writeString(f, GSON.toJson(d), StandardCharsets.UTF_8);
         } catch (Exception ignored) {}
     }
 }

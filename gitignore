@@ -1,8 +1,25 @@
+# Java / Gradle
 build/
 .gradle/
-*.class
-*.jar
-!gradle/wrapper/gradle-wrapper.jar
 out/
+*.class
+
+# IDE
 .idea/
 *.iml
+.vscode/
+.settings/
+.classpath
+.project
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Local
+install.json
+config.json
+session.json
+*.lnk
+update.bat
+*.jar.new

@@ -3,23 +3,29 @@ package launcher;
 import com.google.gson.*;
 
 import java.awt.Desktop;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Duration;
+import java.util.function.IntConsumer;
 
 /**
- * Проверка обновлений через GitHub Releases API.
- * Сравнивает tag_name последнего релиза с текущей версией лаунчера.
+ * Проверка + скачивание обновлений через GitHub Releases API.
  */
 public final class UpdateChecker {
 
-    /** ЗАМЕНИ на свой репозиторий: "user/repo". */
-    public static final String GITHUB_REPO = "YOUR_GITHUB_USER/YOUR_REPO";
+    /** ЗАМЕНИ на свой репозиторий: "user/repo" (без .git). */
+    public static final String GITHUB_REPO = "FIMOZIK/worm-client";
 
     private static final HttpClient HTTP = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(15))
+            .followRedirects(HttpClient.Redirect.NORMAL)
             .build();
 
     private UpdateChecker() {}
@@ -36,10 +42,6 @@ public final class UpdateChecker {
         }
     }
 
-    /**
-     * Возвращает UpdateInfo если апдейт есть, null если текущая версия не хуже.
-     * Бросает IllegalStateException если репозиторий не настроен / не найден.
-     */
     public static UpdateInfo check(String currentVersion) throws Exception {
         if (GITHUB_REPO.contains("YOUR_GITHUB_USER")) {
             throw new IllegalStateException("репозиторий для обновлений не настроен");
@@ -69,7 +71,6 @@ public final class UpdateChecker {
         String tagVer = tag.startsWith("v") ? tag.substring(1) : tag;
         if (!isNewer(tagVer, currentVersion)) return null;
 
-        // первый попавшийся .jar-ассет
         String assetUrl = null, assetName = null;
         if (root.has("assets") && root.get("assets").isJsonArray()) {
             for (JsonElement el : root.getAsJsonArray("assets")) {
@@ -83,8 +84,36 @@ public final class UpdateChecker {
                 }
             }
         }
-
         return new UpdateInfo(tag, html, body, assetUrl, assetName);
+    }
+
+    /**
+     * Скачать assetUrl в destPath. progress получает 0..100 или -1 если размер неизвестен.
+     */
+    public static void download(String assetUrl, Path destPath, IntConsumer progress) throws Exception {
+        HttpRequest req = HttpRequest.newBuilder(URI.create(assetUrl))
+                .header("User-Agent", "WormLauncher")
+                .timeout(Duration.ofMinutes(5))
+                .GET().build();
+        HttpResponse<InputStream> resp = HTTP.send(req, HttpResponse.BodyHandlers.ofInputStream());
+        if (resp.statusCode() != 200) throw new IOException("HTTP " + resp.statusCode());
+
+        long total = resp.headers().firstValueAsLong("content-length").orElse(-1);
+        Files.createDirectories(destPath.getParent());
+
+        try (InputStream in = resp.body();
+             OutputStream out = Files.newOutputStream(destPath)) {
+            byte[] buf = new byte[65536];
+            long read = 0;
+            int n;
+            while ((n = in.read(buf)) > 0) {
+                out.write(buf, 0, n);
+                read += n;
+                if (progress != null) {
+                    progress.accept(total > 0 ? (int) (read * 100L / total) : -1);
+                }
+            }
+        }
     }
 
     public static void openInBrowser(String url) {
@@ -95,7 +124,6 @@ public final class UpdateChecker {
         } catch (Exception ignored) {}
     }
 
-    /** true если latest > current, по числовому сравнению major.minor.patch. */
     public static boolean isNewer(String latest, String current) {
         if (latest == null || current == null) return false;
         String[] a = latest.split("\\.");

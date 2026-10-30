@@ -2,10 +2,11 @@ plugins {
     id 'java'
     id 'application'
     id 'org.openjfx.javafxplugin' version '0.1.0'
+    id 'com.gradleup.shadow' version '8.3.5'
 }
 
 group = 'launcher'
-version = '1.0.0'
+version = '1.0.3'
 
 java {
     toolchain {
@@ -19,7 +20,7 @@ javafx {
 }
 
 application {
-    mainClass = 'launcher.LauncherApp'
+    mainClass = 'launcher.LauncherMain'
 }
 
 repositories {
@@ -42,3 +43,23 @@ tasks.withType(Test) {
 run {
     jvmArgs = ['-Dfile.encoding=UTF-8']
 }
+
+shadowJar {
+    archiveBaseName.set('worm-launcher')
+    archiveClassifier.set('')
+    archiveVersion.set('1.0.3')
+
+    mergeServiceFiles()
+
+    // без этого shadow падает на module-info от javafx и jna
+    exclude 'module-info.class'
+    exclude 'META-INF/*.SF'
+    exclude 'META-INF/*.DSA'
+    exclude 'META-INF/*.RSA'
+
+    manifest {
+        attributes 'Main-Class': 'launcher.LauncherMain'
+    }
+}
+
+build.dependsOn shadowJar

@@ -23,7 +23,8 @@
 - 🖼 **Кастомизация фона** — PNG/JPG/GIF/MP4 с настройкой прозрачности
 - 🔊 **Звук нажатия клавиш** — свой WAV/MP3/MP4
 - 🔤 **Свои шрифты** — TTF/OTF из файла
-- 📦 **Профили сборок** — сохраняй «1.21.11 + Fabric 0.20.1» под своим именем
+- 📦 **Профили сборок** — сохраняй
+- например - «1.21.11 + Fabric 0.20.1» под своим именем
 - 🎯 **Discord Rich Presence** — статус, кнопки, голова скина
 - 🔄 **Автообновление** — через GitHub Releases, скачивание и самоперезапуск
 - 🎨 **Умный установщик** — выбор папок, ярлык на рабочем столе, свой значок
@@ -47,7 +48,7 @@
 
 ### Вариант 2 — из jar
 
-java -jar worm-launcher-1.0.3.jar
+java -jar worm-launcher-1.0.4.jar
 Требуется Java 21+.
 
 🗑 Удаление
@@ -73,14 +74,14 @@ cd worm-client
 gradlew.bat build
 
 # результат
-# build/libs/worm-launcher-1.0.3.jar
+# build/libs/worm-launcher-1.0.4.jar
 Требования: JDK 21, Windows 10/11.
 
 Сборка .exe (опционально)
 bash
 cd build/libs
-jpackage --type app-image --name WormLauncher --app-version 1.0.3 ^
-  --input . --main-jar worm-launcher-1.0.3.jar ^
+jpackage --type app-image --name WormLauncher --app-version 1.0.4 ^
+  --input . --main-jar worm-launcher-1.0.4.jar ^
   --main-class launcher.LauncherMain ^
   --java-options "-Dfile.encoding=UTF-8"
 🤝 Вклад

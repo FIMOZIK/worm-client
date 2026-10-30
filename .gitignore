@@ -19,3 +19,10 @@ session.json
 *.lnk
 update.bat
 *.jar.new
+
+# артефакты сборки
+build/
+dist/
+
+# локальные клоны / эксперименты
+worm-client/

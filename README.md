@@ -155,7 +155,6 @@ modpacks\ ← модпаки (отдельные папки)
 runtime{major}\ ← автоскачанные JRE
 libs\authlib-injector.jar
 
-text
 
 ---
 

@@ -68,7 +68,7 @@
 
 ### Вариант 1 — готовый .exe (для новичков)
 
-1. Скачай последний **`WormLauncher-1.0.8-full.zip`** из [Releases](https://github.com/FIMOZIK/worm-client/releases)
+1. Скачай последний **`WormLauncher-1.1.0-full.zip`** из [Releases](https://github.com/FIMOZIK/worm-client/releases)
 2. Распакуй в **`D:\WormLauncher\`** (⚠ не в OneDrive — синхронизация ломает автообновление)
 3. Запусти `WormLauncher.exe`
 4. При первом запуске выбери:
@@ -80,7 +80,7 @@
 JRE вшита в exe — **Java ставить не надо**.
 
 ### Вариант 2 — из jar (если есть Java 21+)
-java -jar worm-launcher-1.0.8.jar
+java -jar worm-launcher-1.1.0.jar
 
 Требуется **Java 21+**. если нужной JRE нет — лаунчер сам её скачает.
 
@@ -166,21 +166,21 @@ cd worm-client
 gradlew.bat build
 
 # результат
-# build/libs/worm-launcher-1.0.8.jar
+# build/libs/worm-launcher-1.1.0.jar
 Требования: JDK 21, Windows 10/11.
 
 сборка .exe (опционально)
 cmd
 rmdir /s /q dist-input
 mkdir dist-input
-copy build\libs\worm-launcher-1.0.8.jar dist-input\
+copy build\libs\worm-launcher-1.1.0.jar dist-input\
 
-jpackage --type app-image --name WormLauncher --app-version 1.0.8 ^
-  --input dist-input --main-jar worm-launcher-1.0.8.jar ^
+jpackage --type app-image --name WormLauncher --app-version 1.1.0 ^
+  --input dist-input --main-jar worm-launcher-1.1.0.jar ^
   --main-class launcher.LauncherMain ^
   --java-options "-Dfile.encoding=UTF-8" ^
   --dest dist
-⚠ папка dist-input — только с нужным jar. если копировать build\libs целиком, туда попадёт testmaen-1.0.8.jar (jar-task от Gradle) и сломает сборку.
+⚠ папка dist-input — только с нужным jar. если копировать build\libs целиком, туда попадёт testmaen-1.1.0.jar (jar-task от Gradle) и сломает сборку.
 
 ⚠ Известные ограничения
 MS browser login — не поддерживается (нужен свой Azure tenant). используй device code flow (кнопка «MS»).

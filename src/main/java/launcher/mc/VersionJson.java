@@ -18,6 +18,7 @@ public class VersionJson {
     public final String id;
     public final String inheritsFrom;
     public final String jarVersionId;
+    public final int    javaVersionMajor;   // 21 / 25 и т.д., 21 по умолчанию
     public final String mainClass;
     public final String assetIndexUrl;
     public final String assetIndexSha1;
@@ -28,13 +29,15 @@ public class VersionJson {
     public final List<String> gameArguments;
     public final List<String> jvmArguments;
 
-    private VersionJson(String id, String inheritsFrom, String jarVersionId, String mainClass,
+      private VersionJson(String id, String inheritsFrom, String jarVersionId, int javaVersionMajor,
+                        String mainClass,
                         String assetIndexUrl, String assetIndexSha1, String assetIndexId,
                         Download client, Download loggingClient, List<Library> libraries,
                         List<String> gameArguments, List<String> jvmArguments) {
         this.id = id;
         this.inheritsFrom = inheritsFrom;
         this.jarVersionId = jarVersionId;
+        this.javaVersionMajor = javaVersionMajor;
         this.mainClass = mainClass;
         this.assetIndexUrl = assetIndexUrl;
         this.assetIndexSha1 = assetIndexSha1;
@@ -106,8 +109,8 @@ public class VersionJson {
         if (src.has("id")) target.add("id", src.get("id"));
         if (src.has("mainClass")) target.add("mainClass", src.get("mainClass"));
 
-        for (String k : new String[]{"assetIndex", "downloads", "logging", "assets"}) {
-            if (src.has(k)) target.add(k, src.get(k));
+        for (String k : new String[]{"assetIndex", "downloads", "logging", "assets", "javaVersion"}) {
+            if (src.has(k) && !target.has(k)) target.add(k, src.get(k));
         }
 
         if (src.has("libraries")) {
@@ -171,7 +174,10 @@ public class VersionJson {
 
     private static VersionJson fromJson(String id, String inheritsFrom, String jarVersionId, JsonObject o) {
         String mainClass = o.get("mainClass").getAsString();
-
+        int javaMajor = 21;
+        if (o.has("javaVersion") && o.getAsJsonObject("javaVersion").has("majorVersion")) {
+            javaMajor = o.getAsJsonObject("javaVersion").get("majorVersion").getAsInt();
+        }
         JsonObject idx = o.getAsJsonObject("assetIndex");
         String assetIndexUrl = idx.get("url").getAsString();
         String assetIndexSha1 = idx.has("sha1") ? idx.get("sha1").getAsString() : null;
@@ -268,7 +274,7 @@ public class VersionJson {
             }
         }
 
-        return new VersionJson(id, inheritsFrom, jarVersionId, mainClass,
+        return new VersionJson(id, inheritsFrom, jarVersionId, javaMajor, mainClass,
                 assetIndexUrl, assetIndexSha1, assetIndexId, client, lc, libs,
                 gameArgs, jvmArgs);
     }

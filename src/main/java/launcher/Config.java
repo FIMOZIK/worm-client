@@ -30,12 +30,18 @@ public class Config {
         public String buttonLayout;
 
         public List<Profile> profiles = new ArrayList<>();
+        public List<launcher.ui.ServersPanel.ServerEntry> servers = new ArrayList<>();
+        public String lastServerHost;
+        public Integer lastServerPort;
         public String customFontPath;
         public Boolean soundsEnabled = true;
         public String keypressSoundPath;
         public Boolean autoCheckUpdates = true;
 
         public String lang = Lang.RU;
+
+        // ── memory (new) ──
+        public Integer defaultMemoryMb;   // null → 4096
     }
 
     public static Path FILE() { return Paths.configFile(); }

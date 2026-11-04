@@ -26,3 +26,6 @@ dist/
 
 # локальные клоны / эксперименты
 worm-client/
+
+# jpackage input
+dist-input/

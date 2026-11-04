@@ -12,11 +12,13 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.time.Duration;
 import java.util.function.IntConsumer;
 
 /**
  * Проверка + скачивание обновлений через GitHub Releases API.
+ * Встроен retry: 3 попытки с задержкой 1s/2s между ними.
  */
 public final class UpdateChecker {
 
@@ -24,9 +26,11 @@ public final class UpdateChecker {
     public static final String GITHUB_REPO = "FIMOZIK/worm-client";
 
     private static final HttpClient HTTP = HttpClient.newBuilder()
-            .connectTimeout(Duration.ofSeconds(15))
+            .connectTimeout(Duration.ofSeconds(20))
             .followRedirects(HttpClient.Redirect.NORMAL)
             .build();
+
+    private static final int MAX_RETRIES = 3;
 
     private UpdateChecker() {}
 
@@ -42,22 +46,46 @@ public final class UpdateChecker {
         }
     }
 
+    // ============================================================
+    // CHECK (с retry)
+    // ============================================================
     public static UpdateInfo check(String currentVersion) throws Exception {
         if (GITHUB_REPO.contains("YOUR_GITHUB_USER")) {
             throw new IllegalStateException("репозиторий для обновлений не настроен");
         }
+
+        Exception lastErr = null;
+        for (int attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+            try {
+                return checkOnce(currentVersion);
+            } catch (IllegalStateException ise) {
+                // 404 / "репозиторий не найден" — не retry, это не сеть
+                throw ise;
+            } catch (Exception e) {
+                lastErr = e;
+                System.err.println("[UpdateChecker] check attempt " + attempt
+                        + " failed: " + e.getMessage());
+                if (attempt < MAX_RETRIES) {
+                    try { Thread.sleep(1000L * attempt); } catch (InterruptedException ignored) {}
+                }
+            }
+        }
+        throw new Exception("update check failed after " + MAX_RETRIES + " attempts", lastErr);
+    }
+
+    private static UpdateInfo checkOnce(String currentVersion) throws Exception {
         String url = "https://api.github.com/repos/" + GITHUB_REPO + "/releases/latest";
         HttpRequest req = HttpRequest.newBuilder(URI.create(url))
                 .header("User-Agent", "WormLauncher/" + currentVersion)
                 .header("Accept", "application/vnd.github+json")
-                .timeout(Duration.ofSeconds(20))
+                .timeout(Duration.ofSeconds(30))
                 .GET().build();
         HttpResponse<String> resp = HTTP.send(req, HttpResponse.BodyHandlers.ofString());
         if (resp.statusCode() == 404) {
             throw new IllegalStateException("репозиторий " + GITHUB_REPO + " не найден или нет релизов");
         }
         if (resp.statusCode() != 200) {
-            throw new IllegalStateException("GitHub API ответил " + resp.statusCode());
+            throw new IOException("GitHub API ответил " + resp.statusCode());
         }
         JsonObject root = JsonParser.parseString(resp.body()).getAsJsonObject();
         String tag = root.has("tag_name") && !root.get("tag_name").isJsonNull()
@@ -87,13 +115,35 @@ public final class UpdateChecker {
         return new UpdateInfo(tag, html, body, assetUrl, assetName);
     }
 
+    // ============================================================
+    // DOWNLOAD (с retry)
+    // ============================================================
     /**
      * Скачать assetUrl в destPath. progress получает 0..100 или -1 если размер неизвестен.
      */
     public static void download(String assetUrl, Path destPath, IntConsumer progress) throws Exception {
+        Exception lastErr = null;
+        for (int attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+            try {
+                downloadOnce(assetUrl, destPath, progress);
+                return;
+            } catch (Exception e) {
+                lastErr = e;
+                System.err.println("[UpdateChecker] download attempt " + attempt
+                        + " failed: " + e.getMessage());
+                try { Files.deleteIfExists(destPath); } catch (Exception ignored) {}
+                if (attempt < MAX_RETRIES) {
+                    try { Thread.sleep(1000L * attempt); } catch (InterruptedException ignored) {}
+                }
+            }
+        }
+        throw new Exception("download failed after " + MAX_RETRIES + " attempts", lastErr);
+    }
+
+    private static void downloadOnce(String assetUrl, Path destPath, IntConsumer progress) throws Exception {
         HttpRequest req = HttpRequest.newBuilder(URI.create(assetUrl))
                 .header("User-Agent", "WormLauncher")
-                .timeout(Duration.ofMinutes(5))
+                .timeout(Duration.ofMinutes(10))
                 .GET().build();
         HttpResponse<InputStream> resp = HTTP.send(req, HttpResponse.BodyHandlers.ofInputStream());
         if (resp.statusCode() != 200) throw new IOException("HTTP " + resp.statusCode());
@@ -101,8 +151,10 @@ public final class UpdateChecker {
         long total = resp.headers().firstValueAsLong("content-length").orElse(-1);
         Files.createDirectories(destPath.getParent());
 
+        // пишем в .part и переименовываем в конце — чтобы при обрыве не было битого jar
+        Path tmp = destPath.resolveSibling(destPath.getFileName() + ".part");
         try (InputStream in = resp.body();
-             OutputStream out = Files.newOutputStream(destPath)) {
+             OutputStream out = Files.newOutputStream(tmp)) {
             byte[] buf = new byte[65536];
             long read = 0;
             int n;
@@ -114,8 +166,12 @@ public final class UpdateChecker {
                 }
             }
         }
+        Files.move(tmp, destPath, StandardCopyOption.REPLACE_EXISTING);
     }
 
+    // ============================================================
+    // HELPERS
+    // ============================================================
     public static void openInBrowser(String url) {
         try {
             if (Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.BROWSE)) {

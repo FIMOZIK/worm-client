@@ -27,24 +27,35 @@ import launcher.auth.ElyOAuth;
 import launcher.auth.GameSession;
 import launcher.auth.MojangAuth;
 import launcher.auth.TokenStore;
+import launcher.auth.microsoft.MicrosoftOAuthFlow;
 import launcher.mc.FabricInstaller;
 import launcher.mc.ForgeInstaller;
+import launcher.mc.GameInstaller;
 import launcher.mc.GameLauncher;
+import launcher.mc.NeoForgeInstaller;
+import launcher.mc.OptiFineInstaller;
 import launcher.mc.QuiltInstaller;
 import launcher.mc.VersionManifest;
+import launcher.mc.crash.CrashInfo;
+import launcher.mc.crash.CrashParser;
+import launcher.mc.modpack.ModpackImporter;
+import launcher.ui.CrashCard;
+import launcher.ui.ProfileEditor;
+import launcher.ui.ServersPanel;
+import launcher.ui.SkinPreview;
 import thunder.hack.utility.discord.DiscordEventHandlers;
 import thunder.hack.utility.discord.DiscordRPC;
 import thunder.hack.utility.discord.DiscordRichPresence;
 
 import javax.imageio.ImageIO;
 import java.awt.Desktop;
-import java.io.File;
 import java.awt.MenuItem;
 import java.awt.PopupMenu;
 import java.awt.SystemTray;
 import java.awt.TrayIcon;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
+import java.io.File;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
@@ -54,6 +65,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Base64;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -61,7 +73,7 @@ public class LauncherApp extends Application {
 
     private static final String CLIENT_ID     = "worm-launcher1";
     private static final String CLIENT_SECRET = "YZdFkv0-L5K3aADqedEp0zamy2HzcjBcUApskOHxkzSsxE-XjsuCwdUsAIfVBShk";
-    private static final String LAUNCHER_VERSION = "1.0.3";
+    private static final String LAUNCHER_VERSION = "1.0.9";
 
     private static final String DISCORD_APP_ID = "1564662317663391774";
     private static final String DISCORD_LARGE_IMAGE = "https://i.ibb.co/B2cptB0Y/worm-logo.png";
@@ -87,20 +99,30 @@ public class LauncherApp extends Application {
     private Label statusLabel;
     private TextField nickField;
     private PasswordField passField;
-    private Button loginBtn, logoutBtn, oauthBtn, msBtn, openFolder, checkUpd, settingsBtn;
+    private Button loginBtn, logoutBtn, oauthBtn, msBtn, msBrowserBtn, openFolder, checkUpd, settingsBtn, importPackBtn;
     private CheckBox minimizeBox, autoLaunchBox;
     private ComboBox<Profile> profileBox;
-    private Button saveProfileBtn, deleteProfileBtn;
+    private Button saveProfileBtn, deleteProfileBtn, editProfileBtn;
     private ComboBox<String> versionBox;
     private ComboBox<String> loaderBox;
     private ComboBox<String> fabricLoaderBox;
     private ComboBox<String> forgeVersionBox;
+    private ComboBox<String> neoforgeVersionBox;
     private ComboBox<String> quiltLoaderBox;
+    private ComboBox<String> optifineBox;
+    private Slider memorySlider;
+    private Label memoryLabel;
     private Button playBtn;
     private ProgressBar progressBar;
     private TextArea log;
 
     private String pendingLoaderVersion;
+
+    private final Map<String, OptiFineInstaller.VersionInfo> optifineVersionsMap = new ConcurrentHashMap<>();
+
+    private SkinPreview skinPreview;
+    private ServersPanel serversPanel;
+    private TabPane mainTabs;
 
     private ImageView bgImageView;
     private MediaView bgMediaView;
@@ -150,9 +172,13 @@ public class LauncherApp extends Application {
         logoutBtn   = new Button(Lang.t("btn.logout"));
         oauthBtn    = new Button(Lang.t("btn.oauth"));
         msBtn       = new Button(Lang.t("btn.ms"));
+        msBrowserBtn = new Button("MS (браузер)");
+        msBrowserBtn.setVisible(false);
+        msBrowserBtn.setManaged(false);
         openFolder  = new Button(Lang.t("btn.open_folder"));
         checkUpd    = new Button(Lang.t("btn.check_updates"));
         settingsBtn = new Button(Lang.t("btn.settings"));
+        importPackBtn = new Button("Импорт сборки");
 
         minimizeBox = new CheckBox(Lang.t("chk.minimize"));
         minimizeBox.setSelected(Boolean.TRUE.equals(cfg.minimizeOnPlay));
@@ -173,13 +199,14 @@ public class LauncherApp extends Application {
 
         saveProfileBtn = new Button(Lang.t("btn.save_profile"));
         deleteProfileBtn = new Button(Lang.t("btn.delete_profile"));
+        editProfileBtn = new Button("Редактировать");
 
         versionBox = new ComboBox<>();
         versionBox.setPrefWidth(200);
         versionBox.setPromptText(Lang.t("prompt.loading_versions"));
         versionBox.setDisable(true);
 
-        loaderBox = new ComboBox<>(FXCollections.observableArrayList("Vanilla", "Fabric", "Forge", "Quilt"));
+        loaderBox = new ComboBox<>(FXCollections.observableArrayList("Vanilla", "Fabric", "Forge", "NeoForge", "Quilt", "OptiFine"));
         loaderBox.setValue("Vanilla");
         loaderBox.setPrefWidth(120);
 
@@ -197,12 +224,26 @@ public class LauncherApp extends Application {
         forgeVersionBox.setVisible(false);
         forgeVersionBox.setManaged(false);
 
+        neoforgeVersionBox = new ComboBox<>();
+        neoforgeVersionBox.setPrefWidth(160);
+        neoforgeVersionBox.setPromptText("NeoForge version");
+        neoforgeVersionBox.setDisable(true);
+        neoforgeVersionBox.setVisible(false);
+        neoforgeVersionBox.setManaged(false);
+
         quiltLoaderBox = new ComboBox<>();
         quiltLoaderBox.setPrefWidth(150);
         quiltLoaderBox.setPromptText(Lang.t("prompt.quilt"));
         quiltLoaderBox.setDisable(true);
         quiltLoaderBox.setVisible(false);
         quiltLoaderBox.setManaged(false);
+
+        optifineBox = new ComboBox<>();
+        optifineBox.setPrefWidth(180);
+        optifineBox.setPromptText("OptiFine version");
+        optifineBox.setDisable(true);
+        optifineBox.setVisible(false);
+        optifineBox.setManaged(false);
 
         playBtn = new Button(Lang.t("btn.play"));
         playBtn.getStyleClass().add("play-button");
@@ -211,6 +252,21 @@ public class LauncherApp extends Application {
         progressBar = new ProgressBar(0);
         progressBar.setPrefWidth(180);
         progressBar.setVisible(false);
+
+        int initMemMb = cfg.defaultMemoryMb != null ? cfg.defaultMemoryMb : 4096;
+        memorySlider = new Slider(1024, 16384, initMemMb);
+        memorySlider.setShowTickMarks(true);
+        memorySlider.setShowTickLabels(false);
+        memorySlider.setMajorTickUnit(2048);
+        memorySlider.setBlockIncrement(512);
+        memorySlider.setPrefWidth(140);
+        memorySlider.setMinWidth(100);
+
+        memoryLabel = new Label();
+        memoryLabel.setMinWidth(110);
+        Runnable updateMemLabel = () -> memoryLabel.setText("RAM: " + (int) memorySlider.getValue() + " MB");
+        memorySlider.valueProperty().addListener((o, a, b) -> updateMemLabel.run());
+        updateMemLabel.run();
 
         log = new TextArea();
         log.setEditable(false);
@@ -258,6 +314,9 @@ public class LauncherApp extends Application {
         stage.setMinWidth(620);
         stage.setMinHeight(460);
 
+        skinPreview = new SkinPreview(56);
+        serversPanel = new ServersPanel(cfg, this::startGameOnServer);
+
         setupTray();
         applySavedWindowMode();
 
@@ -285,6 +344,7 @@ public class LauncherApp extends Application {
         });
 
         settingsBtn.setOnAction(e -> openSettings());
+        importPackBtn.setOnAction(e -> importModpack());
 
         new Thread(() -> {
             try {
@@ -310,27 +370,98 @@ public class LauncherApp extends Application {
             if (newV != null && !newV.isBlank()) { cfg.lastVersion = newV; Config.save(cfg); }
             if ("Fabric".equals(loaderBox.getValue())) reloadFabricLoaders(newV);
             if ("Forge".equals(loaderBox.getValue()))  reloadForgeVersions(newV);
+            if ("NeoForge".equals(loaderBox.getValue())) reloadNeoForgeVersions(newV);
             if ("Quilt".equals(loaderBox.getValue()))  reloadQuiltLoaders(newV);
+            if ("OptiFine".equals(loaderBox.getValue())) reloadOptiFineVersions(newV);
         });
 
         loaderBox.valueProperty().addListener((obs, oldV, newV) -> {
-            boolean isFabric = "Fabric".equals(newV);
-            boolean isForge  = "Forge".equals(newV);
-            boolean isQuilt  = "Quilt".equals(newV);
-            fabricLoaderBox.setVisible(isFabric); fabricLoaderBox.setManaged(isFabric);
-            forgeVersionBox.setVisible(isForge);  forgeVersionBox.setManaged(isForge);
-            quiltLoaderBox.setVisible(isQuilt);   quiltLoaderBox.setManaged(isQuilt);
-            if (isFabric) reloadFabricLoaders(versionBox.getValue());
-            else { fabricLoaderBox.getItems().clear(); fabricLoaderBox.setDisable(true); }
-            if (isForge) reloadForgeVersions(versionBox.getValue());
-            else { forgeVersionBox.getItems().clear(); forgeVersionBox.setDisable(true); }
-            if (isQuilt) reloadQuiltLoaders(versionBox.getValue());
-            else { quiltLoaderBox.getItems().clear(); quiltLoaderBox.setDisable(true); }
+            boolean isFabric   = "Fabric".equals(newV);
+            boolean isForge    = "Forge".equals(newV);
+            boolean isNeoForge = "NeoForge".equals(newV);
+            boolean isQuilt    = "Quilt".equals(newV);
+            boolean isOptiFine = "OptiFine".equals(newV);
+            fabricLoaderBox.setVisible(isFabric);       fabricLoaderBox.setManaged(isFabric);
+            forgeVersionBox.setVisible(isForge);        forgeVersionBox.setManaged(isForge);
+            neoforgeVersionBox.setVisible(isNeoForge);  neoforgeVersionBox.setManaged(isNeoForge);
+            quiltLoaderBox.setVisible(isQuilt);         quiltLoaderBox.setManaged(isQuilt);
+            optifineBox.setVisible(isOptiFine);         optifineBox.setManaged(isOptiFine);
+
+            if (isFabric) {
+                reloadFabricLoaders(versionBox.getValue());
+            } else {
+                fabricLoaderBox.getItems().clear();
+                fabricLoaderBox.setDisable(true);
+            }
+
+            if (isForge) {
+                reloadForgeVersions(versionBox.getValue());
+            } else {
+                forgeVersionBox.getItems().clear();
+                forgeVersionBox.setDisable(true);
+            }
+
+            if (isNeoForge) {
+                reloadNeoForgeVersions(versionBox.getValue());
+            } else {
+                neoforgeVersionBox.getItems().clear();
+                neoforgeVersionBox.setDisable(true);
+            }
+
+            if (isQuilt) {
+                reloadQuiltLoaders(versionBox.getValue());
+            } else {
+                quiltLoaderBox.getItems().clear();
+                quiltLoaderBox.setDisable(true);
+            }
+
+            if (isOptiFine) {
+                reloadOptiFineVersions(versionBox.getValue());
+                logLine("");
+                logLine("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+                logLine("  OptiFine — как пользоваться:");
+                logLine("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+                logLine("  1. Выбери версию Minecraft (сверху)");
+                logLine("  2. В поле OptiFine version появится список версий");
+                logLine("  3. Нажми Play");
+                logLine("  4. Если OptiFine ещё не установлен:");
+                logLine("     → откроется окно установщика");
+                logLine("     → нажми в нём кнопку Install");
+                logLine("     → закрой установщик");
+                logLine("  5. Лаунчер сам подхватит и запустит MC с OptiFine");
+                logLine("");
+                logLine("  ⚠ ВАЖНО: OptiFine installer ищет версию MC");
+                logLine("     в %APPDATA%\\.minecraft\\versions\\");
+                logLine("     НЕ в game\\versions\\!");
+                logLine("");
+                logLine("  ЕСЛИ installer пишет 'Cannot find Minecraft X.Y.Z':");
+                logLine("    → значит в %APPDATA%\\.minecraft нет этой версии");
+                logLine("    → РЕШЕНИЕ 1 (простое):");
+                logLine("        • открой официальный лаунчер MC");
+                logLine("        • скачай и запусти версию X.Y.Z один раз");
+                logLine("        • закрой его");
+                logLine("        • снова жми Play в worm launcher");
+                logLine("    → РЕШЕНИЕ 2 (без офф. лаунчера):");
+                logLine("        • скопируй папку game\\versions\\X.Y.Z\\");
+                logLine("        • в %APPDATA%\\.minecraft\\versions\\X.Y.Z\\");
+                logLine("        • снова жми Play");
+                logLine("");
+                logLine("  ⚠ файл OptiFine можно скачать вручную:");
+                logLine("     https://optifine.net/downloads");
+                logLine("     и положить в game\\.cache\\optifine\\");
+                logLine("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+                logLine("");
+            } else {
+                optifineBox.getItems().clear();
+                optifineBox.setDisable(true);
+            }
+
             applyLayout();
         });
 
         saveProfileBtn.setOnAction(e -> saveCurrentProfile());
         deleteProfileBtn.setOnAction(e -> deleteSelectedProfile());
+        editProfileBtn.setOnAction(e -> editSelectedProfile());
         profileBox.valueProperty().addListener((obs, oldP, newP) -> {
             if (newP != null) applyProfile(newP);
         });
@@ -355,6 +486,7 @@ public class LauncherApp extends Application {
                         setStatus((gs.isEly() ? "ely: " : "mojang: ") + gs.username(), true);
                         refreshLauncherPresenceImages();
                         updateLauncherPresence("logged in as " + gs.username());
+                        updateSkinPreview();
                     });
                 } catch (Exception ex) {
                     Platform.runLater(() -> { logLine("✗ " + ex.getMessage()); loginBtn.setDisable(false); });
@@ -382,6 +514,7 @@ public class LauncherApp extends Application {
                         setStatus("ely: " + gs.username(), true);
                         refreshLauncherPresenceImages();
                         updateLauncherPresence("logged in as " + gs.username());
+                        updateSkinPreview();
                     });
                 } catch (Exception ex) {
                     Platform.runLater(() -> { logLine("✗ Ely OAuth: " + ex.getMessage()); oauthBtn.setDisable(false); });
@@ -391,7 +524,7 @@ public class LauncherApp extends Application {
 
         msBtn.setOnAction(e -> {
             msBtn.setDisable(true);
-            logLine("→ login (microsoft) ...");
+            logLine("→ login (microsoft, device code) ...");
             new Thread(() -> {
                 try {
                     MojangAuth.Session s = MojangAuth.login(dc -> {
@@ -414,11 +547,48 @@ public class LauncherApp extends Application {
                         setStatus("mojang: " + gs.username(), true);
                         refreshLauncherPresenceImages();
                         updateLauncherPresence("logged in as " + gs.username());
+                        updateSkinPreview();
                     });
                 } catch (Exception ex) {
                     Platform.runLater(() -> { logLine("✗ Microsoft: " + ex.getMessage()); msBtn.setDisable(false); });
                 }
             }, "ms-auth").start();
+        });
+
+        msBrowserBtn.setOnAction(e -> {
+            msBrowserBtn.setDisable(true);
+            logLine("→ login (microsoft, browser) ...");
+            new Thread(() -> {
+                try {
+                    MojangAuth.Session s = MicrosoftOAuthFlow.login(authUrl -> {
+                        Platform.runLater(() -> {
+                            logLine("→ open in browser (если не открылось — вставь вручную):");
+                            logLine("     " + authUrl);
+                        });
+                    });
+                    GameSession gs = GameSession.fromMojang(s);
+                    TokenStore.save(gs);
+                    cfg.lastNick = gs.username();
+                    Config.save(cfg);
+                    Platform.runLater(() -> {
+                        session = gs;
+                        logLine("✓ " + gs);
+                        playBtn.setDisable(false);
+                        msBrowserBtn.setDisable(false);
+                        setStatus("mojang: " + gs.username(), true);
+                        refreshLauncherPresenceImages();
+                        updateLauncherPresence("logged in as " + gs.username());
+                        updateSkinPreview();
+                    });
+                } catch (Exception ex) {
+                    Platform.runLater(() -> {
+                        logLine("✗ MS browser: " + ex.getMessage());
+                        logLine("  если ошибка 'AADSTS50011' или 'redirect_uri mismatch' —");
+                        logLine("  CLIENT_ID не поддерживает localhost redirect. используй кнопку MS (device code).");
+                        msBrowserBtn.setDisable(false);
+                    });
+                }
+            }, "ms-browser-auth").start();
         });
 
         logoutBtn.setOnAction(e -> {
@@ -431,6 +601,7 @@ public class LauncherApp extends Application {
                 logLine("✓ session cleared");
                 if (presence != null) { presence.smallImageKey = ""; presence.smallImageText = ""; }
                 updateLauncherPresence("idle");
+                if (skinPreview != null) skinPreview.clear();
             } catch (Exception ex) { logLine("✗ " + ex.getMessage()); }
         });
 
@@ -451,7 +622,37 @@ public class LauncherApp extends Application {
             logLine("saved session: " + cached);
             refreshLauncherPresenceImages();
             updateLauncherPresence("logged in as " + cached.username());
-            if (autoLaunchBox.isSelected()) Platform.runLater(() -> maybeAutoLaunch(true));
+            updateSkinPreview();
+
+            if (cached.needsRefresh()) {
+                logLine("→ MS access_token истёк, обновляю...");
+                playBtn.setDisable(true);
+                new Thread(() -> {
+                    try {
+                        MojangAuth.Session refreshed = MojangAuth.refresh(cached.refreshToken());
+                        GameSession gs = GameSession.fromMojang(refreshed);
+                        TokenStore.save(gs);
+                        Platform.runLater(() -> {
+                            session = gs;
+                            playBtn.setDisable(false);
+                            setStatus("mojang: " + gs.username(), true);
+                            logLine("✓ MS сессия обновлена (refresh)");
+                            refreshLauncherPresenceImages();
+                            updateLauncherPresence("logged in as " + gs.username());
+                            updateSkinPreview();
+                        });
+                    } catch (Exception ex) {
+                        Platform.runLater(() -> {
+                            logLine("✗ MS refresh failed: " + ex.getMessage());
+                            logLine("  → нужно залогиниться заново (кнопка MS)");
+                            playBtn.setDisable(true);
+                            setStatus(Lang.t("status.not_logged"), false);
+                        });
+                    }
+                }, "ms-refresh").start();
+            } else {
+                if (autoLaunchBox.isSelected()) Platform.runLater(() -> maybeAutoLaunch(true));
+            }
         }
 
         stage.show();
@@ -461,10 +662,23 @@ public class LauncherApp extends Application {
         }
     }
 
+    // ============================================================
+    // Start game on server
+    // ============================================================
+    private void startGameOnServer() {
+        if (cfg.lastServerHost == null || cfg.lastServerHost.isBlank()) {
+            logLine("⚠ сервер не выбран");
+            return;
+        }
+        startGame();
+    }
+
+
     @Override
     public void stop() {
         stopLauncherRpc();
         SoundManager.stop();
+        if (serversPanel != null) serversPanel.shutdown();
         if (bgMediaPlayer != null) {
             try { bgMediaPlayer.stop(); bgMediaPlayer.dispose(); } catch (Exception ignored) {}
             bgMediaPlayer = null;
@@ -632,7 +846,9 @@ public class LauncherApp extends Application {
         String lv = null;
         if ("Fabric".equals(loader)) lv = fabricLoaderBox.getValue();
         else if ("Forge".equals(loader)) lv = forgeVersionBox.getValue();
+        else if ("NeoForge".equals(loader)) lv = neoforgeVersionBox.getValue();
         else if ("Quilt".equals(loader)) lv = quiltLoaderBox.getValue();
+        else if ("OptiFine".equals(loader)) lv = optifineBox.getValue();
 
         cfg.profiles.removeIf(x -> x.name != null && x.name.equals(name));
         cfg.profiles.add(new Profile(name, versionBox.getValue(), loader, lv));
@@ -651,13 +867,98 @@ public class LauncherApp extends Application {
         logLine("✓ profile deleted: " + p.name);
     }
 
+    private void editSelectedProfile() {
+        Profile p = profileBox.getValue();
+        if (p == null) {
+            logLine("⚠ выбери профиль для редактирования");
+            return;
+        }
+
+        String oldName = p.name;
+        Profile edited = ProfileEditor.edit(stage, p, cfg.defaultMemoryMb);
+        if (edited == null) {
+            logLine("→ редактирование отменено");
+            return;
+        }
+
+        cfg.profiles.removeIf(x -> x.name != null && x.name.equals(oldName));
+        cfg.profiles.add(edited);
+        Config.save(cfg);
+        refreshProfiles();
+        for (Profile pp : cfg.profiles)
+            if (pp.name.equals(edited.name)) profileBox.setValue(pp);
+
+        logLine("✓ профиль обновлён: " + edited.name
+                + (edited.memoryMb != null ? " (mem=" + edited.memoryMb + "MB)" : "")
+                + (edited.customJvmArgs != null ? " (jvm: " + edited.customJvmArgs + ")" : ""));
+    }
+
+    // ============================================================
+    // MODPACK IMPORT
+    // ============================================================
+
+    private void importModpack() {
+        FileChooser fc = new FileChooser();
+        fc.setTitle("Import modpack");
+        fc.getExtensionFilters().addAll(
+                new FileChooser.ExtensionFilter("Modpacks", "*.mrpack", "*.zip"),
+                new FileChooser.ExtensionFilter("All files", "*.*")
+        );
+        File f = fc.showOpenDialog(stage);
+        if (f == null) return;
+
+        importPackBtn.setDisable(true);
+        playBtn.setDisable(true);
+        progressBar.setVisible(true);
+        progressBar.setProgress(0);
+        logLine("→ modpack import: " + f.getName());
+
+        new Thread(() -> {
+            try {
+                ModpackImporter.Result res = ModpackImporter.importModpack(
+                        f.toPath(), GAME_DIR,
+                        new ModpackImporter.Progress() {
+                            @Override public void status(String msg) {
+                                Platform.runLater(() -> logLine(msg));
+                            }
+                            @Override public void progress(double pct) {
+                                Platform.runLater(() -> progressBar.setProgress(pct));
+                            }
+                        });
+
+                Platform.runLater(() -> {
+                    cfg.profiles.removeIf(x -> x.name != null && x.name.equals(res.profile().name));
+                    cfg.profiles.add(res.profile());
+                    Config.save(cfg);
+                    refreshProfiles();
+                    for (Profile p : cfg.profiles)
+                        if (p.name.equals(res.profile().name)) profileBox.setValue(p);
+
+                    logLine("✓ profile added: " + res.profile().name
+                            + " [" + res.profile().modpackType + "]");
+                    logLine("  dir: " + res.modpackDir());
+                    importPackBtn.setDisable(false);
+                    playBtn.setDisable(session == null);
+                    progressBar.setVisible(false);
+                });
+            } catch (Exception ex) {
+                Platform.runLater(() -> {
+                    logLine("✗ import: " + ex.getMessage());
+                    importPackBtn.setDisable(false);
+                    playBtn.setDisable(session == null);
+                    progressBar.setVisible(false);
+                });
+            }
+        }, "modpack-import").start();
+    }
+
     // ============================================================
     // SOUND / FONT
     // ============================================================
 
     private void wireSounds() {
-        for (Button b : new Button[]{loginBtn, logoutBtn, oauthBtn, msBtn, openFolder, checkUpd,
-                settingsBtn, playBtn, saveProfileBtn, deleteProfileBtn}) {
+        for (Button b : new Button[]{loginBtn, logoutBtn, oauthBtn, msBtn, msBrowserBtn, openFolder, checkUpd,
+                settingsBtn, playBtn, saveProfileBtn, deleteProfileBtn, editProfileBtn, importPackBtn}) {
             if (b == null) continue;
             b.addEventHandler(ActionEvent.ACTION, e -> SoundManager.playKeypress());
         }
@@ -688,19 +989,23 @@ public class LauncherApp extends Application {
         boolean logInSeparate = logInSeparateWindow();
 
         detachAll(titleLabel, statusLabel, nickField, passField, loginBtn, logoutBtn,
-                oauthBtn, msBtn, openFolder, checkUpd, settingsBtn,
-                minimizeBox, autoLaunchBox, profileBox, saveProfileBtn, deleteProfileBtn,
-                versionBox, loaderBox, fabricLoaderBox, forgeVersionBox, quiltLoaderBox,
-                playBtn, progressBar);
+                oauthBtn, msBtn, msBrowserBtn, openFolder, checkUpd, settingsBtn, importPackBtn,
+                minimizeBox, autoLaunchBox, profileBox, saveProfileBtn, deleteProfileBtn, editProfileBtn,
+                versionBox, loaderBox, fabricLoaderBox, forgeVersionBox, neoforgeVersionBox,
+                quiltLoaderBox, optifineBox, memorySlider, memoryLabel,
+                playBtn, progressBar, skinPreview);
         if (!logInSeparate) detachAll(log);
 
         contentHolder.getChildren().clear();
 
-        HBox titleRow = new HBox(12, titleLabel, statusLabel);
+        Region titleSpacer = new Region();
+        HBox.setHgrow(titleSpacer, Priority.ALWAYS);
+        HBox titleRow = new HBox(12, titleLabel, statusLabel, titleSpacer, skinPreview);
         titleRow.setAlignment(Pos.CENTER_LEFT);
 
         HBox profileRow = new HBox(8,
-                new Label(Lang.t("label.profile")), profileBox, saveProfileBtn, deleteProfileBtn);
+                new Label(Lang.t("label.profile")), profileBox,
+                saveProfileBtn, editProfileBtn, deleteProfileBtn);
         profileRow.setAlignment(Pos.CENTER_LEFT);
 
         if ("LEFT".equals(layout)) {
@@ -709,7 +1014,8 @@ public class LauncherApp extends Application {
                     new Separator(),
                     loginBtn, logoutBtn,
                     new Separator(),
-                    oauthBtn, msBtn, openFolder, checkUpd, settingsBtn,
+                    oauthBtn, msBtn, msBrowserBtn, openFolder, checkUpd, settingsBtn,
+                    importPackBtn,
                     new Separator(),
                     minimizeBox, autoLaunchBox);
             sidebar.setPrefWidth(230);
@@ -717,7 +1023,10 @@ public class LauncherApp extends Application {
 
             HBox playRow = new HBox(8,
                     new Label(Lang.t("label.version")), versionBox,
-                    new Label(Lang.t("label.loader")), loaderBox, fabricLoaderBox, forgeVersionBox, quiltLoaderBox,
+                    new Label(Lang.t("label.loader")), loaderBox,
+                    fabricLoaderBox, forgeVersionBox, neoforgeVersionBox,
+                    quiltLoaderBox, optifineBox,
+                    memorySlider, memoryLabel,
                     playBtn, progressBar);
             playRow.setAlignment(Pos.CENTER_LEFT);
             HBox.setHgrow(versionBox, Priority.ALWAYS);
@@ -726,8 +1035,13 @@ public class LauncherApp extends Application {
             HBox.setHgrow(right, Priority.ALWAYS);
 
             if (!logInSeparate && !Boolean.FALSE.equals(cfg.showLog)) {
-                right.getChildren().addAll(new Label(Lang.t("label.log")), log);
-                VBox.setVgrow(log, Priority.ALWAYS);
+                Tab logTab = new Tab("Лог", log);
+                logTab.setClosable(false);
+                Tab serversTab = new Tab("Серверы", serversPanel);
+                serversTab.setClosable(false);
+                mainTabs = new TabPane(logTab, serversTab);
+                VBox.setVgrow(mainTabs, Priority.ALWAYS);
+                right.getChildren().add(mainTabs);
             }
 
             HBox h = new HBox(10, sidebar, right);
@@ -739,14 +1053,18 @@ public class LauncherApp extends Application {
             HBox.setHgrow(nickField, Priority.ALWAYS);
             HBox.setHgrow(passField, Priority.ALWAYS);
 
-            FlowPane actionRow = new FlowPane(8, 8, oauthBtn, msBtn, openFolder, checkUpd, settingsBtn);
+            FlowPane actionRow = new FlowPane(8, 8,
+                    oauthBtn, msBtn, msBrowserBtn, openFolder, checkUpd, settingsBtn, importPackBtn);
             actionRow.setPrefWrapLength(700);
 
             FlowPane optsRow = new FlowPane(16, 8, minimizeBox, autoLaunchBox);
 
             HBox playRow = new HBox(8,
                     new Label(Lang.t("label.version")), versionBox,
-                    new Label(Lang.t("label.loader")), loaderBox, fabricLoaderBox, forgeVersionBox, quiltLoaderBox,
+                    new Label(Lang.t("label.loader")), loaderBox,
+                    fabricLoaderBox, forgeVersionBox, neoforgeVersionBox,
+                    quiltLoaderBox, optifineBox,
+                    memorySlider, memoryLabel,
                     playBtn, progressBar);
             playRow.setAlignment(Pos.CENTER_LEFT);
             HBox.setHgrow(versionBox, Priority.ALWAYS);
@@ -754,8 +1072,13 @@ public class LauncherApp extends Application {
             contentHolder.getChildren().addAll(titleRow, authRow, actionRow, optsRow, profileRow, new Separator(), playRow);
 
             if (!logInSeparate && !Boolean.FALSE.equals(cfg.showLog)) {
-                contentHolder.getChildren().addAll(new Label(Lang.t("label.log")), log);
-                VBox.setVgrow(log, Priority.ALWAYS);
+                Tab logTab = new Tab("Лог", log);
+                logTab.setClosable(false);
+                Tab serversTab = new Tab("Серверы", serversPanel);
+                serversTab.setClosable(false);
+                mainTabs = new TabPane(logTab, serversTab);
+                VBox.setVgrow(mainTabs, Priority.ALWAYS);
+                contentHolder.getChildren().add(mainTabs);
             }
         }
 
@@ -794,7 +1117,7 @@ public class LauncherApp extends Application {
         }
     }
 
-        private void rebuildBgLayer() {
+    private void rebuildBgLayer() {
         if (bgMediaPlayer != null) {
             try { bgMediaPlayer.stop(); bgMediaPlayer.dispose(); } catch (Exception ignored) {}
             bgMediaPlayer = null;
@@ -806,7 +1129,6 @@ public class LauncherApp extends Application {
 
         boolean userBgValid = cfg.bgImagePath != null && Files.exists(Path.of(cfg.bgImagePath));
 
-        // нет пользовательского фона → fallback на worm_logo_mic.png
         if (!userBgValid) {
             Image def = loadBundledImage("worm_logo_mic.png");
             if (def != null) {
@@ -864,14 +1186,17 @@ public class LauncherApp extends Application {
         if (logoutBtn != null) logoutBtn.setText(Lang.t("btn.logout"));
         if (oauthBtn != null) oauthBtn.setText(Lang.t("btn.oauth"));
         if (msBtn != null) msBtn.setText(Lang.t("btn.ms"));
+        if (msBrowserBtn != null) msBrowserBtn.setText("MS (браузер)");
         if (openFolder != null) openFolder.setText(Lang.t("btn.open_folder"));
         if (checkUpd != null) checkUpd.setText(Lang.t("btn.check_updates"));
         if (settingsBtn != null) settingsBtn.setText(Lang.t("btn.settings"));
+        if (importPackBtn != null) importPackBtn.setText("Импорт сборки");
         if (playBtn != null) playBtn.setText(Lang.t("btn.play"));
         if (minimizeBox != null) minimizeBox.setText(Lang.t("chk.minimize"));
         if (autoLaunchBox != null) autoLaunchBox.setText(Lang.t("chk.autolaunch"));
         if (saveProfileBtn != null) saveProfileBtn.setText(Lang.t("btn.save_profile"));
         if (deleteProfileBtn != null) deleteProfileBtn.setText(Lang.t("btn.delete_profile"));
+        if (editProfileBtn != null) editProfileBtn.setText("Редактировать");
         if (nickField != null) nickField.setPromptText(Lang.t("field.nick"));
         if (passField != null) passField.setPromptText(Lang.t("field.pass"));
         if (profileBox != null) {
@@ -880,7 +1205,9 @@ public class LauncherApp extends Application {
         }
         if (fabricLoaderBox != null) fabricLoaderBox.setPromptText(Lang.t("prompt.loader"));
         if (forgeVersionBox != null) forgeVersionBox.setPromptText(Lang.t("prompt.forge"));
+        if (neoforgeVersionBox != null) neoforgeVersionBox.setPromptText("NeoForge version");
         if (quiltLoaderBox != null) quiltLoaderBox.setPromptText(Lang.t("prompt.quilt"));
+        if (optifineBox != null) optifineBox.setPromptText("OptiFine version");
         if (stage != null) stage.setTitle(Lang.t("app.title") + " " + LAUNCHER_VERSION);
         applyLayout();
     }
@@ -896,7 +1223,7 @@ public class LauncherApp extends Application {
         head.setStyle("-fx-font-size: 16px;");
 
         ComboBox<String> themeCombo = new ComboBox<>(FXCollections.observableArrayList(ThemeManager.listPresets()));
-        themeCombo.setValue(cfg.theme != null ? cfg.theme : "WormGreen");
+        themeCombo.setValue(cfg.theme != null ? cfg.theme : "WormLauncher");
         themeCombo.setPrefWidth(240);
 
         CheckBox darkBox = new CheckBox(Lang.t("settings.dark"));
@@ -906,13 +1233,11 @@ public class LauncherApp extends Application {
         layoutCombo.setValue(cfg.buttonLayout != null ? cfg.buttonLayout : "TOP");
         layoutCombo.setPrefWidth(180);
 
-        // языки
         ComboBox<String> langCombo = new ComboBox<>(FXCollections.observableArrayList(
                 Lang.t("settings.lang_ru"), Lang.t("settings.lang_en")));
         langCombo.setValue(Lang.EN.equals(Lang.current()) ? Lang.t("settings.lang_en") : Lang.t("settings.lang_ru"));
         langCombo.setPrefWidth(180);
 
-        // фон
         Label bgPath = new Label(cfg.bgImagePath == null ? Lang.t("settings.sound_none") : cfg.bgImagePath);
         bgPath.getStyleClass().add("subtitle-label");
         bgPath.setWrapText(true);
@@ -939,7 +1264,7 @@ public class LauncherApp extends Application {
                     new FileChooser.ExtensionFilter("Video", "*.mp4", "*.flv", "*.m4v"),
                     new FileChooser.ExtensionFilter("All files", "*.*")
             );
-            java.io.File f = fc.showOpenDialog(s);
+            File f = fc.showOpenDialog(s);
             if (f != null) {
                 cfg.bgImagePath = f.getAbsolutePath();
                 bgPath.setText(cfg.bgImagePath);
@@ -952,7 +1277,6 @@ public class LauncherApp extends Application {
             rebuildBgLayer();
         });
 
-        // шрифт
         Label fontPath = new Label(cfg.customFontPath == null ? Lang.t("settings.default") : cfg.customFontPath);
         fontPath.getStyleClass().add("subtitle-label");
         fontPath.setWrapText(true);
@@ -962,7 +1286,7 @@ public class LauncherApp extends Application {
             FileChooser fc = new FileChooser();
             fc.getExtensionFilters().add(
                     new FileChooser.ExtensionFilter("Fonts", "*.ttf", "*.otf"));
-            java.io.File f = fc.showOpenDialog(s);
+            File f = fc.showOpenDialog(s);
             if (f != null) {
                 cfg.customFontPath = f.getAbsolutePath();
                 fontPath.setText(cfg.customFontPath);
@@ -973,7 +1297,6 @@ public class LauncherApp extends Application {
             fontPath.setText(Lang.t("settings.default"));
         });
 
-        // звук
         Label soundPath = new Label(cfg.keypressSoundPath == null || cfg.keypressSoundPath.isBlank()
                 ? Lang.t("settings.sound_none") : cfg.keypressSoundPath);
         soundPath.getStyleClass().add("subtitle-label");
@@ -1012,7 +1335,7 @@ public class LauncherApp extends Application {
                     new FileChooser.ExtensionFilter("Sounds", "*.wav", "*.mp3", "*.aiff", "*.mp4", "*.m4a", "*.aac"),
                     new FileChooser.ExtensionFilter("All files", "*.*")
             );
-            java.io.File f = fc.showOpenDialog(s);
+            File f = fc.showOpenDialog(s);
             if (f != null) {
                 cfg.keypressSoundPath = f.getAbsolutePath();
                 soundPath.setText(cfg.keypressSoundPath);
@@ -1040,7 +1363,6 @@ public class LauncherApp extends Application {
         CheckBox autoCheckUpdBox = new CheckBox(Lang.t("settings.auto_check"));
         autoCheckUpdBox.setSelected(!Boolean.FALSE.equals(cfg.autoCheckUpdates));
 
-        // режим окна
         ToggleGroup wmGroup = new ToggleGroup();
         RadioButton wmWindowed   = new RadioButton(Lang.t("settings.windowed"));
         RadioButton wmMaximized  = new RadioButton(Lang.t("settings.maximized"));
@@ -1086,35 +1408,35 @@ public class LauncherApp extends Application {
                 s.close();
             } catch (Exception ex) { logLine("✗ uninstall: " + ex.getMessage()); }
         });
-        
+
         Button shortcutBtn = new Button(Lang.t("settings.shortcut"));
-shortcutBtn.setOnAction(e -> {
-    Path jd = selfJarPath != null ? selfJarPath.getParent() : Paths.launcherDir();
-    DirectoryChooser dc = new DirectoryChooser();
-    dc.setTitle(Lang.t("shortcut.pick_title"));
-    Path desktop = Installer.defaultDesktop();
-    if (desktop != null && Files.isDirectory(desktop)) dc.setInitialDirectory(desktop.toFile());
-    File chosen = dc.showDialog(s);
-    if (chosen == null) return;
-    try {
-        Path lnk = Installer.createShortcutAt(jd, chosen.toPath());
-        logLine("✓ shortcut: " + lnk);
-        Alert ok = new Alert(Alert.AlertType.INFORMATION);
-        ok.initOwner(s);
-        ok.setTitle(Lang.t("settings.shortcut"));
-        ok.setHeaderText(Lang.t("shortcut.done"));
-        ok.setContentText(lnk.toString());
-        ok.showAndWait();
-    } catch (Exception ex) {
-        logLine("✗ shortcut: " + ex.getMessage());
-        Alert err = new Alert(Alert.AlertType.ERROR);
-        err.initOwner(s);
-        err.setTitle(Lang.t("settings.shortcut"));
-        err.setHeaderText(null);
-        err.setContentText(ex.getMessage());
-        err.showAndWait();
-    }
-});
+        shortcutBtn.setOnAction(e -> {
+            Path jd = selfJarPath != null ? selfJarPath.getParent() : Paths.launcherDir();
+            DirectoryChooser dc = new DirectoryChooser();
+            dc.setTitle(Lang.t("shortcut.pick_title"));
+            Path desktop = Installer.defaultDesktop();
+            if (desktop != null && Files.isDirectory(desktop)) dc.setInitialDirectory(desktop.toFile());
+            File chosen = dc.showDialog(s);
+            if (chosen == null) return;
+            try {
+                Path lnk = Installer.createShortcutAt(jd, chosen.toPath());
+                logLine("✓ shortcut: " + lnk);
+                Alert ok = new Alert(Alert.AlertType.INFORMATION);
+                ok.initOwner(s);
+                ok.setTitle(Lang.t("settings.shortcut"));
+                ok.setHeaderText(Lang.t("shortcut.done"));
+                ok.setContentText(lnk.toString());
+                ok.showAndWait();
+            } catch (Exception ex) {
+                logLine("✗ shortcut: " + ex.getMessage());
+                Alert err = new Alert(Alert.AlertType.ERROR);
+                err.initOwner(s);
+                err.setTitle(Lang.t("settings.shortcut"));
+                err.setHeaderText(null);
+                err.setContentText(ex.getMessage());
+                err.showAndWait();
+            }
+        });
 
         Button okBtn = new Button(Lang.t("settings.apply"));
         okBtn.getStyleClass().add("play-button");
@@ -1125,7 +1447,6 @@ shortcutBtn.setOnAction(e -> {
         final String oldMode = initialMode;
 
         okBtn.setOnAction(e -> {
-            // язык
             String pickedLangKey = langCombo.getValue();
             boolean wantEn = pickedLangKey != null && pickedLangKey.equals(Lang.t("settings.lang_en"));
             cfg.lang = wantEn ? Lang.EN : Lang.RU;
@@ -1302,6 +1623,35 @@ shortcutBtn.setOnAction(e -> {
         }, "forge-versions").start();
     }
 
+    private void reloadNeoForgeVersions(String mcVersion) {
+        if (mcVersion == null || mcVersion.isBlank()) return;
+        neoforgeVersionBox.setDisable(true);
+        neoforgeVersionBox.getItems().clear();
+        neoforgeVersionBox.setPromptText("loading NeoForge ...");
+        logLine("→ neoforge versions for " + mcVersion + " ...");
+
+        new Thread(() -> {
+            try {
+                List<String> versions = VersionManifest.fetchNeoForgeVersions(mcVersion);
+                Platform.runLater(() -> {
+                    neoforgeVersionBox.setItems(FXCollections.observableArrayList(versions));
+                    if (!versions.isEmpty()) neoforgeVersionBox.setValue(versions.get(0));
+                    neoforgeVersionBox.setDisable(versions.isEmpty());
+                    neoforgeVersionBox.setPromptText(versions.isEmpty()
+                            ? "no NeoForge for " + mcVersion
+                            : "NeoForge version");
+                    applyPendingToBox(neoforgeVersionBox, versions);
+                    logLine("✓ neoforge versions: " + versions.size());
+                });
+            } catch (Exception ex) {
+                Platform.runLater(() -> {
+                    neoforgeVersionBox.setPromptText("neoforge fetch failed");
+                    logLine("✗ neoforge versions: " + ex.getMessage());
+                });
+            }
+        }, "neoforge-versions").start();
+    }
+
     private void reloadQuiltLoaders(String mcVersion) {
         if (mcVersion == null || mcVersion.isBlank()) return;
         quiltLoaderBox.setDisable(true);
@@ -1329,6 +1679,51 @@ shortcutBtn.setOnAction(e -> {
         }, "quilt-loaders").start();
     }
 
+    private void reloadOptiFineVersions(String mcVersion) {
+        if (mcVersion == null || mcVersion.isBlank()) return;
+        optifineBox.setDisable(true);
+        optifineBox.getItems().clear();
+        optifineVersionsMap.clear();
+        optifineBox.setPromptText("loading OptiFine ...");
+        logLine("→ optifine versions for " + mcVersion + " ...");
+
+        new Thread(() -> {
+            try {
+                List<OptiFineInstaller.VersionInfo> versions = OptiFineInstaller.fetchVersions(mcVersion);
+                List<String> labels = versions.stream()
+                        .map(OptiFineInstaller.VersionInfo::toString)
+                        .toList();
+                Platform.runLater(() -> {
+                    optifineVersionsMap.clear();
+                    for (OptiFineInstaller.VersionInfo v : versions) {
+                        optifineVersionsMap.put(v.toString(), v);
+                    }
+                    optifineBox.setItems(FXCollections.observableArrayList(labels));
+                    if (!labels.isEmpty()) optifineBox.setValue(labels.get(0));
+                    optifineBox.setDisable(labels.isEmpty());
+                    optifineBox.setPromptText(labels.isEmpty()
+                            ? "no OptiFine for " + mcVersion
+                            : "OptiFine version");
+
+                    if (labels.isEmpty()) {
+                        logLine("✗ для MC " + mcVersion + " нет OptiFine");
+                        logLine("  → попробуй выбрать другую версию MC (1.21.4, 1.20.1 и т.д.)");
+                    } else {
+                        logLine("✓ optifine versions: " + labels.size()
+                                + " (свежая: " + labels.get(0) + ")");
+                    }
+                });
+            } catch (Exception ex) {
+                Platform.runLater(() -> {
+                    optifineBox.setPromptText("optifine fetch failed");
+                    logLine("✗ optifine versions: " + ex.getMessage());
+                    logLine("  → проверь интернет или попробуй позже");
+                    logLine("  → скачать OptiFine можно вручную: https://optifine.net/downloads");
+                });
+            }
+        }, "optifine-versions").start();
+    }
+
     private void applyPendingToBox(ComboBox<String> box, List<String> items) {
         if (pendingLoaderVersion == null) return;
         if (items.contains(pendingLoaderVersion)) {
@@ -1350,12 +1745,16 @@ shortcutBtn.setOnAction(e -> {
         String ver = versionBox.getValue();
         if (ver == null || ver.isBlank()) { logLine(Lang.t("game.no_version")); return; }
 
-        boolean isFabric = "Fabric".equals(loaderBox.getValue());
-        boolean isForge  = "Forge".equals(loaderBox.getValue());
-        boolean isQuilt  = "Quilt".equals(loaderBox.getValue());
-        final String fabricLoaderVer = isFabric ? fabricLoaderBox.getValue() : null;
-        final String forgeLoaderVer  = isForge  ? forgeVersionBox.getValue()  : null;
-        final String quiltLoaderVer  = isQuilt  ? quiltLoaderBox.getValue()   : null;
+        boolean isFabric   = "Fabric".equals(loaderBox.getValue());
+        boolean isForge    = "Forge".equals(loaderBox.getValue());
+        boolean isNeoForge = "NeoForge".equals(loaderBox.getValue());
+        boolean isQuilt    = "Quilt".equals(loaderBox.getValue());
+        boolean isOptiFine = "OptiFine".equals(loaderBox.getValue());
+        final String fabricLoaderVer   = isFabric   ? fabricLoaderBox.getValue()   : null;
+        final String forgeLoaderVer    = isForge    ? forgeVersionBox.getValue()    : null;
+        final String neoforgeLoaderVer = isNeoForge ? neoforgeVersionBox.getValue() : null;
+        final String quiltLoaderVer    = isQuilt    ? quiltLoaderBox.getValue()     : null;
+        final String optifineVer       = isOptiFine ? optifineBox.getValue()        : null;
 
         if (isFabric && (fabricLoaderVer == null || fabricLoaderVer.isBlank())) {
             logLine(Lang.t("game.no_fabric")); return;
@@ -1363,17 +1762,25 @@ shortcutBtn.setOnAction(e -> {
         if (isForge && (forgeLoaderVer == null || forgeLoaderVer.isBlank())) {
             logLine(Lang.t("game.no_forge")); return;
         }
+        if (isNeoForge && (neoforgeLoaderVer == null || neoforgeLoaderVer.isBlank())) {
+            logLine("✗ NeoForge version not selected"); return;
+        }
         if (isQuilt && (quiltLoaderVer == null || quiltLoaderVer.isBlank())) {
             logLine(Lang.t("game.no_quilt")); return;
+        }
+        if (isOptiFine && (optifineVer == null || optifineVer.isBlank())) {
+            logLine("✗ optifine version not selected"); return;
         }
 
         playBtn.setDisable(true);
         progressBar.setVisible(true);
         progressBar.setProgress(0);
         logLine(Lang.t("game.launching") + " " + ver
-                + (isFabric ? " (fabric " + fabricLoaderVer + ")" : "")
-                + (isForge  ? " (forge "  + forgeLoaderVer  + ")" : "")
-                + (isQuilt  ? " (quilt "  + quiltLoaderVer  + ")" : "")
+                + (isFabric   ? " (fabric "   + fabricLoaderVer   + ")" : "")
+                + (isForge    ? " (forge "    + forgeLoaderVer    + ")" : "")
+                + (isNeoForge ? " (neoforge " + neoforgeLoaderVer + ")" : "")
+                + (isQuilt    ? " (quilt "    + quiltLoaderVer    + ")" : "")
+                + (isOptiFine ? " (optifine " + optifineVer       + ")" : "")
                 + " [" + session.type() + "] ...");
 
         final boolean hiddenToTray = trayReady && Boolean.TRUE.equals(cfg.minimizeOnPlay);
@@ -1385,9 +1792,20 @@ shortcutBtn.setOnAction(e -> {
         }
 
         new Thread(() -> {
+            Path runDirOverride = null;
+            final long launchStartMs = System.currentTimeMillis();
             try {
                 updateLauncherPresence("launching MC " + ver);
                 stopLauncherRpc();
+
+                Path vanillaJson = GAME_DIR.resolve("versions").resolve(ver).resolve(ver + ".json");
+                Path vanillaJar  = GAME_DIR.resolve("versions").resolve(ver).resolve(ver + ".jar");
+                if (!Files.exists(vanillaJson) || !Files.exists(vanillaJar)) {
+                    Platform.runLater(() -> logLine("→ installing vanilla " + ver + " ..."));
+                    GameInstaller.install(ver, GAME_DIR, pct ->
+                            Platform.runLater(() -> progressBar.setProgress(pct * 0.4)));
+                    Platform.runLater(() -> logLine("✓ vanilla " + ver + " ready"));
+                }
 
                 String launchId = ver;
                 if (isFabric) {
@@ -1398,32 +1816,151 @@ shortcutBtn.setOnAction(e -> {
                 } else if (isForge) {
                     Platform.runLater(() -> logLine(Lang.t("game.installing_forge")));
                     launchId = ForgeInstaller.install(GAME_DIR, ver, forgeLoaderVer, pct ->
-                            Platform.runLater(() -> progressBar.setProgress(pct)));
+                            Platform.runLater(() -> progressBar.setProgress(0.4 + pct * 0.6)));
                     final String fid = launchId;
                     Platform.runLater(() -> logLine("✓ forge profile: " + fid));
+                } else if (isNeoForge) {
+                    Platform.runLater(() -> logLine("→ installing NeoForge " + neoforgeLoaderVer + " ..."));
+                    launchId = NeoForgeInstaller.install(GAME_DIR, ver, neoforgeLoaderVer, pct ->
+                            Platform.runLater(() -> progressBar.setProgress(0.4 + pct * 0.6)));
+                    final String fid = launchId;
+                    Platform.runLater(() -> logLine("✓ neoforge profile: " + fid));
                 } else if (isQuilt) {
                     Platform.runLater(() -> logLine(Lang.t("game.installing_quilt")));
                     launchId = QuiltInstaller.install(GAME_DIR, ver, quiltLoaderVer);
                     final String fid = launchId;
                     Platform.runLater(() -> logLine("✓ quilt profile: " + fid));
+                } else if (isOptiFine) {
+                    OptiFineInstaller.VersionInfo vi = optifineVersionsMap.get(optifineVer);
+                    if (vi == null) {
+                        throw new Exception("OptiFine version info not found: " + optifineVer);
+                    }
+
+                    boolean alreadyInstalled = Files.isDirectory(
+                            GAME_DIR.resolve("versions").resolve(ver + "-OptiFine"));
+
+                    boolean mcInDotMinecraft = false;
+                    String appdata = System.getenv("APPDATA");
+                    if (appdata != null) {
+                        Path dotMcVer = Path.of(appdata).resolve(".minecraft").resolve("versions").resolve(ver);
+                        mcInDotMinecraft = Files.isDirectory(dotMcVer);
+                    }
+
+                    final boolean fMcInDot = mcInDotMinecraft;
+                    Platform.runLater(() -> {
+                        logLine("");
+                        logLine("━━━━━━━━ OptiFine " + optifineVer + " ━━━━━━━━");
+                        if (alreadyInstalled) {
+                            logLine("  ✓ OptiFine уже установлен в game\\versions\\");
+                            logLine("  → запускаю MC без установщика");
+                        } else {
+                            logLine("  ✗ OptiFine не установлен");
+                            logLine("");
+
+                            if (fMcInDot) {
+                                logLine("  ✓ версия MC " + ver + " найдена в %APPDATA%\\.minecraft\\versions\\");
+                                logLine("  → installer сможет её найти");
+                            } else {
+                                logLine("  ⚠ ВНИМАНИЕ: версия MC " + ver + " НЕ найдена");
+                                logLine("     в %APPDATA%\\.minecraft\\versions\\");
+                                logLine("");
+                                logLine("  OptiFine installer ищет версию ТОЛЬКО в %APPDATA%\\.minecraft\\,");
+                                logLine("  а НЕ в game\\versions\\. без неё установка упадёт с ошибкой");
+                                logLine("  'Cannot find Minecraft " + ver + "'.");
+                                logLine("");
+                                logLine("  ПЕРЕД Play сделай ОДНО из:");
+                                logLine("    A) открой официальный лаунчер MC,");
+                                logLine("       скачай и запусти " + ver + " один раз, закрой");
+                                logLine("    B) скопируй папку game\\versions\\" + ver + "\\");
+                                logLine("       в %APPDATA%\\.minecraft\\versions\\" + ver + "\\");
+                                logLine("");
+                                logLine("  Сейчас всё равно попробую установить — но");
+                                logLine("  если упадёт с ошибкой — сделай A или B выше.");
+                                logLine("");
+                            }
+
+                            logLine("  Сейчас лаунчер:");
+                            logLine("    1) скачает OptiFine installer");
+                            logLine("    2) откроет окно установки");
+                            logLine("    3) ты нажимаешь Install в окне");
+                            logLine("    4) закроешь окно");
+                            logLine("    5) лаунчер подхватит профиль и запустит MC");
+                            logLine("");
+                            logLine("  ⚠ ЕСЛИ installer не скачается автоматически:");
+                            logLine("    → скачай jar вручную: https://optifine.net/downloads");
+                            logLine("    → положи сюда: game\\.cache\\optifine\\");
+                            logLine("    → снова нажми Play");
+                        }
+                        logLine("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+                        logLine("");
+                        logLine("→ installing OptiFine " + optifineVer + " ...");
+                    });
+
+                    launchId = OptiFineInstaller.ensureInstalled(GAME_DIR, ver, vi, pct ->
+                            Platform.runLater(() -> progressBar.setProgress(0.4 + pct * 0.6)));
+                    final String fid = launchId;
+                    Platform.runLater(() -> {
+                        logLine("✓ optifine profile ready: " + fid);
+                        logLine("→ launching Minecraft with OptiFine ...");
+                    });
                 }
 
                 final String finalLaunchId = launchId;
-                Process p = GameLauncher.launch(session, finalLaunchId, pct ->
+
+                Profile selectedProfile = profileBox.getValue();
+                if (selectedProfile != null
+                        && selectedProfile.modpackId != null
+                        && !selectedProfile.modpackId.isBlank()) {
+                    runDirOverride = GAME_DIR.resolve("modpacks").resolve(selectedProfile.modpackId);
+                    final Path rd = runDirOverride;
+                    Platform.runLater(() -> logLine("→ modpack gameDir: " + rd));
+                }
+
+                int memMb = memorySlider != null ? (int) memorySlider.getValue() : 4096;
+                Profile selProf = profileBox.getValue();
+                if (selProf != null && selProf.memoryMb != null && selProf.memoryMb > 0) {
+                    memMb = selProf.memoryMb;
+                }
+                if (memorySlider != null) {
+                    cfg.defaultMemoryMb = (int) memorySlider.getValue();
+                    Config.save(cfg);
+                }
+                logLine("→ memory: -Xmx" + memMb + "M");
+
+                List<String> extraJvm = null;
+                if (selProf != null
+                        && selProf.customJvmArgs != null
+                        && !selProf.customJvmArgs.isBlank()) {
+                    extraJvm = new java.util.ArrayList<>();
+                    for (String a : selProf.customJvmArgs.split("\\s+")) {
+                        if (!a.isBlank()) extraJvm.add(a);
+                    }
+                    logLine("→ custom JVM args: " + extraJvm);
+                }
+
+                GameLauncher.LaunchOptions launchOpts =
+                        new GameLauncher.LaunchOptions(memMb, extraJvm, cfg.lastServerHost, cfg.lastServerPort);
+
+                Process p = GameLauncher.launch(session, finalLaunchId, runDirOverride, launchOpts, pct ->
                         Platform.runLater(() -> progressBar.setProgress(pct)));
 
                 int code = p.waitFor();
                 initLauncherRpc();
+                final int exitCode = code;
                 Platform.runLater(() -> {
                     refreshLauncherPresenceImages();
                     updateLauncherPresence(session != null ? "logged in as " + session.username() : "idle");
                     progressBar.setVisible(false);
-                    logLine(Lang.t("game.finished") + " " + code);
+                    logLine(Lang.t("game.finished") + " " + exitCode);
                     playBtn.setDisable(false);
                     if (hiddenToTray) restoreWindow();
                 });
+
+                showCrashIfAny(runDirOverride, launchStartMs);
+
             } catch (Exception ex) {
                 initLauncherRpc();
+                final Path fRunDir = runDirOverride;
                 Platform.runLater(() -> {
                     refreshLauncherPresenceImages();
                     updateLauncherPresence(session != null ? "logged in as " + session.username() : "idle");
@@ -1432,8 +1969,60 @@ shortcutBtn.setOnAction(e -> {
                     playBtn.setDisable(false);
                     if (hiddenToTray) restoreWindow();
                 });
+                showCrashIfAny(fRunDir, launchStartMs);
             }
         }, "mc-launch").start();
+    }
+
+    private void showCrashIfAny(Path runDirOverride, long launchStartMs) {
+        Path primaryDir = (runDirOverride != null ? runDirOverride : GAME_DIR)
+                .resolve("crash-reports");
+        Path crashFile = CrashParser.findLatestCrashAfter(primaryDir, launchStartMs);
+
+        if (crashFile == null && runDirOverride != null) {
+            crashFile = CrashParser.findLatestCrashAfter(
+                    GAME_DIR.resolve("crash-reports"), launchStartMs);
+        }
+        if (crashFile == null) return;
+
+        final CrashInfo info = CrashParser.parse(crashFile);
+        Platform.runLater(() -> {
+            logLine("✗ обнаружен крэш: " + info.title());
+            logLine("  " + info.summary());
+            for (String h : info.suggestions()) logLine("    • " + h);
+            CrashCard.show(stage, info);
+        });
+    }
+
+    private void updateSkinPreview() {
+        if (skinPreview == null) return;
+
+        String nick = session != null ? session.username() : cfg.lastNick;
+        if (nick == null || nick.isBlank()) {
+            skinPreview.clear();
+            return;
+        }
+
+        boolean isMojang = session != null && session.isMojang();
+
+        new Thread(() -> {
+            try {
+                javafx.scene.image.Image img;
+                if (isMojang) {
+                    String url = "https://mc-heads.net/avatar/" + nick + "/128";
+                    img = new javafx.scene.image.Image(url, 128, 128, true, false);
+                    if (img.isError()) return;
+                } else {
+                    byte[] png = renderElyHeadPng(nick);
+                    if (png == null) return;
+                    img = new javafx.scene.image.Image(
+                            new java.io.ByteArrayInputStream(png));
+                    if (img.isError()) return;
+                }
+                final javafx.scene.image.Image finalImg = img;
+                Platform.runLater(() -> skinPreview.setSkin(finalImg, nick));
+            } catch (Exception ignored) {}
+        }, "skin-preview").start();
     }
 
     private void setStatus(String text, boolean ok) {
@@ -1483,11 +2072,10 @@ shortcutBtn.setOnAction(e -> {
         }
     }
 
-            private Image makeIcon() {
+    private Image makeIcon() {
         Image img = loadBundledImage("worm_logo.png");
         if (img != null) return img;
 
-        // fallback: синтетическая
         int size = 64;
         WritableImage wi = new WritableImage(size, size);
         PixelWriter pw = wi.getPixelWriter();
@@ -1508,9 +2096,7 @@ shortcutBtn.setOnAction(e -> {
         return wi;
     }
 
-    /** Ищет картинку сначала в classpath (внутри jar), потом рядом с jar, потом в launcherDir. */
     private Image loadBundledImage(String name) {
-        // 1) classpath (src/main/resources)
         try (InputStream in = getClass().getResourceAsStream("/" + name)) {
             if (in != null) {
                 Image img = new Image(in);
@@ -1518,7 +2104,6 @@ shortcutBtn.setOnAction(e -> {
             }
         } catch (Exception ignored) {}
 
-        // 2) рядом с jar + 3) в папке лаунчера
         java.util.List<Path> candidates = new java.util.ArrayList<>();
         if (selfJarPath != null) {
             candidates.add(selfJarPath.getParent().resolve(name));
@@ -1865,5 +2450,42 @@ shortcutBtn.setOnAction(e -> {
         return null;
     }
 
-    public static void main(String[] args) { launch(args); }
+    public static void main(String[] args) {
+        Thread.setDefaultUncaughtExceptionHandler((t, e) -> {
+            StringBuilder sb = new StringBuilder();
+            sb.append("\n=== ").append(new java.util.Date()).append(" ===\n");
+            sb.append("thread: ").append(t.getName()).append("\n");
+            sb.append("error:  ").append(e).append("\n");
+            for (StackTraceElement el : e.getStackTrace()) {
+                sb.append("    at ").append(el).append("\n");
+            }
+            Throwable c = e.getCause();
+            while (c != null) {
+                sb.append("Caused by: ").append(c).append("\n");
+                for (StackTraceElement el : c.getStackTrace()) {
+                    sb.append("    at ").append(el).append("\n");
+                }
+                c = c.getCause();
+            }
+            String text = sb.toString();
+            e.printStackTrace();
+
+            try {
+                java.nio.file.Path log = java.nio.file.Path.of(
+                        System.getProperty("user.home"), "worm-launcher-error.log");
+                java.nio.file.Files.writeString(log, text,
+                        java.nio.charset.StandardCharsets.UTF_8,
+                        java.nio.file.StandardOpenOption.CREATE,
+                        java.nio.file.StandardOpenOption.APPEND);
+            } catch (Exception ignored) {}
+
+            try {
+                javax.swing.JOptionPane.showMessageDialog(null,
+                        text, "worm launcher — startup error",
+                        javax.swing.JOptionPane.ERROR_MESSAGE);
+            } catch (Exception ignored) {}
+        });
+
+        launch(args);
+    }
 }

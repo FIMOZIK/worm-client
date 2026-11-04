@@ -4,11 +4,15 @@ import javafx.application.Application;
 import javafx.application.Platform;
 import javafx.stage.Stage;
 
+import java.nio.file.Files;
 import java.nio.file.Path;
 
 public class LauncherMain {
 
     public static void main(String[] args) {
+        Path installDir = detectInstallDir();
+        Paths.init(installDir);
+
         boolean uninstallMode = false;
         for (String a : args) if ("--uninstall".equals(a)) { uninstallMode = true; break; }
 
@@ -28,21 +32,25 @@ public class LauncherMain {
         }
     }
 
-    /**
-     * Один Application, который сначала показывает окно установки (если нужно),
-     * затем передаёт управление LauncherApp на тот же primary Stage.
-     */
-    public static class CombinedApp extends Application {
+    public static Path detectInstallDir() {
+        Path jarDir = detectJarDir();
+        Path parent = jarDir.getParent();
+        if (parent != null && Files.isDirectory(parent.resolve("runtime"))) {
+            return parent;
+        }
+        return jarDir;
+    }
 
+    public static class CombinedApp extends Application {
         private LauncherApp launcher;
 
         @Override
         public void start(Stage primary) {
-            Path jarDir = detectJarDir();
-            Paths.init(jarDir);
-
+            // installDir уже применён через Paths.init в main().
+            // Здесь проверяем только isInstalled() (он смотрит в user.home).
             if (!Paths.isInstalled()) {
-                boolean installed = Installer.run(jarDir, primary);
+                Path installDir = detectInstallDir();
+                boolean installed = Installer.run(installDir, primary);
                 if (!installed) {
                     Platform.exit();
                     return;

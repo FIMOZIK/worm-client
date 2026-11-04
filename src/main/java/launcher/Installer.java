@@ -13,6 +13,7 @@ import java.io.File;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Comparator;
 import java.util.Optional;
 
 public final class Installer {
@@ -173,10 +174,14 @@ public final class Installer {
 
     /**
      * Создаёт .lnk на jar в указанной папке, с иконкой из worm_logo.png.
+     * Jar выбирается так:
+     *   1) фактически запущенный jar (SelfUpdater.detectJar()), если он в jarDir
+     *   2) самый свежий worm-launcher*.jar в jarDir (по lastModified)
      */
     public static Path createShortcutAt(Path jarDir, Path targetDir) throws Exception {
         Path jar = findJar(jarDir);
         if (jar == null) throw new IllegalStateException("jar not found in " + jarDir);
+        System.out.println("[shortcut] using jar: " + jar);
 
         Path ico = prepareIco();
 
@@ -188,13 +193,18 @@ public final class Installer {
         if (!Files.isDirectory(targetDir)) Files.createDirectories(targetDir);
         Path lnk = targetDir.resolve("worm launcher.lnk");
 
+        String jarAbs = jar.toAbsolutePath().toString().replace("'", "''");
+        String javawAbs = javaw.replace("'", "''");
+        String wdAbs = jarDir.toAbsolutePath().toString().replace("'", "''");
+
         StringBuilder ps = new StringBuilder();
         ps.append("$s=(New-Object -COM WScript.Shell).CreateShortcut('")
           .append(lnk.toAbsolutePath().toString().replace("'", "''"))
           .append("');");
-        ps.append("$s.TargetPath='").append(javaw.replace("'", "''")).append("';");
-        ps.append("$s.Arguments='-jar \"").append(jar.toAbsolutePath().toString().replace("'", "''")).append("\"';");
-        ps.append("$s.WorkingDirectory='").append(jarDir.toAbsolutePath().toString().replace("'", "''")).append("';");
+        ps.append("$s.TargetPath='").append(javawAbs).append("';");
+        ps.append("$s.Arguments='-Dfile.encoding=UTF-8 -jar \"").append(jarAbs).append("\"';");
+        ps.append("$s.WorkingDirectory='").append(wdAbs).append("';");
+        ps.append("$s.Description='worm launcher';");
         if (ico != null) {
             ps.append("$s.IconLocation='")
               .append(ico.toAbsolutePath().toString().replace("'", "''"))
@@ -208,17 +218,34 @@ public final class Installer {
     }
 
     private static Path findJar(Path jarDir) throws Exception {
+        // 1) фактически запущенный jar
+        try {
+            Path self = SelfUpdater.detectJar();
+            if (self != null && Files.exists(self)) {
+                Path selfDir = self.toAbsolutePath().getParent();
+                if (selfDir != null && selfDir.equals(jarDir.toAbsolutePath())) {
+                    return self;
+                }
+            }
+        } catch (Exception ignored) {}
+
+        // 2) самый свежий worm-launcher*.jar в jarDir
         try (var list = Files.list(jarDir)) {
-            Optional<Path> any = list.filter(p -> p.getFileName().toString().endsWith(".jar")
-                    && p.getFileName().toString().startsWith("worm-launcher")).findFirst();
-            return any.orElse(null);
+            return list.filter(p -> {
+                        String n = p.getFileName().toString();
+                        return n.startsWith("worm-launcher") && n.endsWith(".jar");
+                    })
+                    .max(Comparator.comparingLong(p -> {
+                        try { return Files.getLastModifiedTime(p).toMillis(); }
+                        catch (Exception e) { return 0L; }
+                    }))
+                    .orElse(null);
         }
     }
 
-        /** PNG → ICO. Ищет PNG в classpath/jar-папке/launcherDir. Возвращает null если PNG нет. */
+    /** PNG → ICO. Ищет PNG в classpath/jar-папке/launcherDir. Возвращает null если PNG нет. */
     private static Path prepareIco() {
         try {
-            // сохраняем PNG во временный файл, чтобы был реальный путь для powershell
             Path png = extractLogoPng();
             if (png == null) return null;
 
@@ -253,14 +280,7 @@ public final class Installer {
         }
     }
 
-    /**
-     * Достаёт worm_logo.png в реальный файл:
-     *  1) пробует classpath (внутри jar) → копирует во временный файл
-     *  2) пробует рядом с jar
-     *  3) пробует в папке лаунчера
-     */
     private static Path extractLogoPng() throws Exception {
-        // 1) classpath
         try (var in = Installer.class.getResourceAsStream("/worm_logo.png")) {
             if (in != null) {
                 Path tmp = Files.createTempFile("worm_logo_", ".png");
@@ -269,7 +289,6 @@ public final class Installer {
             }
         } catch (Exception ignored) {}
 
-        // 2) рядом с jar
         try {
             Path jarDir = LauncherMain.detectJarDir();
             Path p = jarDir.resolve("worm_logo.png");
@@ -278,7 +297,6 @@ public final class Installer {
             if (Files.exists(p2)) return p2;
         } catch (Exception ignored) {}
 
-        // 3) launcherDir
         try {
             Path p = Paths.launcherDir().resolve("worm_logo.png");
             if (Files.exists(p)) return p;

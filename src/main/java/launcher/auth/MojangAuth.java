@@ -12,9 +12,12 @@ import java.nio.charset.StandardCharsets;
 import java.util.function.Consumer;
 
 /**
- * Вход через Microsoft (Mojang) по device code flow.
+ * Вход через Microsoft (Mojang) по device code flow + refresh.
  * Пользователь получает код, открывает microsoft.com/link, вводит код —
  * лаунчер поллит токен-эндпоинт, потом гоняет XBL → XSTS → Minecraft.
+ *
+ * Refresh: по refresh_token получаем новый MS access_token,
+ * потом заново прогоняем XBL → XSTS → Minecraft.
  */
 public class MojangAuth {
 
@@ -29,7 +32,8 @@ public class MojangAuth {
     private static final String MC_LOGIN_URL    = "https://api.minecraftservices.com/authentication/login_with_xbox";
     private static final String MC_PROFILE_URL  = "https://api.minecraftservices.com/minecraft/profile";
 
-    public record Session(String username, String uuid, String accessToken, String userType, String refreshToken) {
+    public record Session(String username, String uuid, String accessToken,
+                          String userType, String refreshToken, long expiresAt) {
         @Override
         public String toString() {
             return "MojangSession{" + username + ", uuid=" + uuid + "}";
@@ -37,6 +41,8 @@ public class MojangAuth {
     }
 
     public record DeviceCode(String userCode, String verificationUri, String deviceCode, int interval, int expiresIn) {}
+
+    private record MsTokens(String accessToken, String refreshToken) {}
 
     /** Шаг 1: получить код у Microsoft. */
     public static DeviceCode startDeviceCode() throws IOException {
@@ -60,11 +66,58 @@ public class MojangAuth {
         DeviceCode dc = startDeviceCode();
         onCode.accept(dc);
 
-        String msAccessToken = pollForAccessToken(dc);
-        return exchangeForMinecraft(msAccessToken);
+        MsTokens tokens = pollForAccessToken(dc);
+        return exchangeForMinecraft(tokens.accessToken(), tokens.refreshToken());
     }
 
-    private static String pollForAccessToken(DeviceCode dc) throws Exception {
+    /**
+     * Refresh: по refresh_token получаем новый MS access_token,
+     * потом полный цикл XBL → XSTS → MC.
+     */
+    public static Session refresh(String refreshToken) throws Exception {
+        if (refreshToken == null || refreshToken.isBlank()) {
+            throw new IOException("no refresh_token — нужен релогин");
+        }
+
+        String body = "client_id=" + CLIENT_ID
+                + "&grant_type=refresh_token"
+                + "&refresh_token=" + url(refreshToken)
+                + "&scope=" + url(SCOPE);
+
+        HttpURLConnection conn = openPostForm(TOKEN_URL, body);
+        int code = conn.getResponseCode();
+        String text;
+        try (InputStream in = code >= 400 ? conn.getErrorStream() : conn.getInputStream()) {
+            text = new String(in.readAllBytes(), StandardCharsets.UTF_8);
+        }
+
+        if (code != 200) {
+            try {
+                JsonObject errJson = JsonParser.parseString(text).getAsJsonObject();
+                String err = errJson.has("error") ? errJson.get("error").getAsString() : "unknown";
+                String desc = errJson.has("error_description")
+                        ? errJson.get("error_description").getAsString()
+                        : text;
+                // invalid_grant = refresh_token истёк/отозван → нужен релогин
+                throw new IOException("refresh: " + err + " — " + desc);
+            } catch (JsonParseException jpe) {
+                throw new IOException("refresh HTTP " + code + ": " + text);
+            }
+        }
+
+        JsonObject json = JsonParser.parseString(text).getAsJsonObject();
+        if (!json.has("access_token")) {
+            throw new IOException("refresh: no access_token in response");
+        }
+        String newMsAccess = json.get("access_token").getAsString();
+        String newRefresh  = json.has("refresh_token")
+                ? json.get("refresh_token").getAsString()
+                : refreshToken;
+
+        return exchangeForMinecraft(newMsAccess, newRefresh);
+    }
+
+    private static MsTokens pollForAccessToken(DeviceCode dc) throws Exception {
         long deadline = System.currentTimeMillis() + dc.expiresIn() * 1000L;
         int interval = Math.max(2, dc.interval());
 
@@ -80,7 +133,9 @@ public class MojangAuth {
             }
             JsonObject json = JsonParser.parseString(text).getAsJsonObject();
             if (code == 200 && json.has("access_token")) {
-                return json.get("access_token").getAsString();
+                String at = json.get("access_token").getAsString();
+                String rt = json.has("refresh_token") ? json.get("refresh_token").getAsString() : "";
+                return new MsTokens(at, rt);
             }
             String err = json.has("error") ? json.get("error").getAsString() : "";
             switch (err) {
@@ -96,7 +151,7 @@ public class MojangAuth {
     }
 
     /** OAuth-токен → Minecraft access token + профиль. */
-    public static Session exchangeForMinecraft(String msAccessToken) throws Exception {
+    public static Session exchangeForMinecraft(String msAccessToken, String refreshToken) throws Exception {
         // 1. Xbox Live user token
         JsonObject xblReq = new JsonObject();
         JsonObject xblProps = new JsonObject();
@@ -160,6 +215,19 @@ public class MojangAuth {
         JsonObject mcResp = postJson(MC_LOGIN_URL, mcReq.toString());
         String mcAccess = mcResp.get("access_token").getAsString();
 
+        // expires_in от MC: секунды (обычно 86400 = 24h)
+        long expiresAt;
+        if (mcResp.has("expires_in")) {
+            try {
+                expiresAt = System.currentTimeMillis()
+                        + mcResp.get("expires_in").getAsLong() * 1000L;
+            } catch (Exception e) {
+                expiresAt = System.currentTimeMillis() + 24L * 3600L * 1000L;
+            }
+        } else {
+            expiresAt = System.currentTimeMillis() + 24L * 3600L * 1000L;
+        }
+
         // 4. Профиль (uuid + nick)
         HttpURLConnection profConn = openGet(MC_PROFILE_URL, mcAccess);
         int profCode = profConn.getResponseCode();
@@ -173,7 +241,7 @@ public class MojangAuth {
         String uuid = prof.get("id").getAsString();
         String name = prof.get("name").getAsString();
 
-        return new Session(name, uuid, mcAccess, "msa", "");
+        return new Session(name, uuid, mcAccess, "msa", refreshToken, expiresAt);
     }
 
     // ---- helpers ----

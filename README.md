@@ -86,6 +86,12 @@ jpackage --type app-image --name WormLauncher --app-version 1.0.3 ^
 🤝 Вклад
 Пулл-реквесты приветствуются. По крупным изменениям — сначала открой issue, обсудим.
 
+## 📸 Скриншоты
+
+| Dark |
+|:-:|
+| ![](screenshots/main.png)
+
 📜 Лицензия
 MIT — делай что хочешь.
 

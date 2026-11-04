@@ -9,26 +9,54 @@ import java.util.*;
 
 public class VersionManifest {
 
-    private static final String URL =
-            "https://launchermeta.mojang.com/mc/game/version_manifest_v2.json";
+    private static final String[] MANIFEST_URLS = {
+            "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json",
+            "https://launchermeta.mojang.com/mc/game/version_manifest_v2.json",
+            "https://bmclapi2.bangbang93.com/mc/game/version_manifest_v2.json"
+    };
+
     private static final HttpClient HTTP = HttpClient.newBuilder()
-            .connectTimeout(Duration.ofSeconds(15)).build();
+            .connectTimeout(Duration.ofSeconds(20))
+            .followRedirects(HttpClient.Redirect.NORMAL)
+            .build();
 
     public record Entry(String id, String type, String url, String sha1) {}
 
     private static List<Entry> cache = null;
 
-    private static final Map<String, List<String>> FABRIC_CACHE = new HashMap<>();
-    private static final Map<String, List<String>> FORGE_CACHE  = new HashMap<>();
-    private static final Map<String, List<String>> QUILT_CACHE  = new HashMap<>();
+    private static final Map<String, List<String>> FABRIC_CACHE   = new HashMap<>();
+    private static final Map<String, List<String>> FORGE_CACHE    = new HashMap<>();
+    private static final Map<String, List<String>> NEOFORGE_CACHE = new HashMap<>();
+    private static final Map<String, List<String>> QUILT_CACHE    = new HashMap<>();
 
     public static List<Entry> fetch() throws Exception {
         if (cache != null) return cache;
-        HttpRequest req = HttpRequest.newBuilder(URI.create(URL))
-                .header("User-Agent", "WormLauncher/1.0").GET().build();
+
+        Exception lastErr = null;
+        for (String url : MANIFEST_URLS) {
+            try {
+                List<Entry> list = fetchFrom(url);
+                cache = list;
+                System.out.println("[VersionManifest] loaded " + list.size()
+                        + " versions from " + hostOf(url));
+                return list;
+            } catch (Exception e) {
+                lastErr = e;
+                System.err.println("[VersionManifest] failed " + hostOf(url)
+                        + ": " + e.getMessage());
+            }
+        }
+        throw new Exception("all manifest sources failed", lastErr);
+    }
+
+    private static List<Entry> fetchFrom(String url) throws Exception {
+        HttpRequest req = HttpRequest.newBuilder(URI.create(url))
+                .header("User-Agent", "WormLauncher/1.0")
+                .timeout(Duration.ofSeconds(30))
+                .GET().build();
         HttpResponse<String> resp = HTTP.send(req, HttpResponse.BodyHandlers.ofString());
         if (resp.statusCode() != 200)
-            throw new RuntimeException("manifest fetch failed: " + resp.statusCode());
+            throw new RuntimeException("http " + resp.statusCode());
 
         JsonObject root = JsonParser.parseString(resp.body()).getAsJsonObject();
         List<Entry> out = new ArrayList<>();
@@ -41,7 +69,6 @@ public class VersionManifest {
                     o.has("sha1") ? o.get("sha1").getAsString() : null
             ));
         }
-        cache = out;
         return out;
     }
 
@@ -76,11 +103,23 @@ public class VersionManifest {
         return fetched;
     }
 
+    public static synchronized List<String> fetchNeoForgeVersions(String mcVersion) throws Exception {
+        List<String> cached = NEOFORGE_CACHE.get(mcVersion);
+        if (cached != null) return cached;
+        List<String> fetched = NeoForgeInstaller.fetchNeoForgeVersions(mcVersion);
+        NEOFORGE_CACHE.put(mcVersion, fetched);
+        return fetched;
+    }
+
     public static synchronized List<String> fetchQuiltLoaders(String mcVersion) throws Exception {
         List<String> cached = QUILT_CACHE.get(mcVersion);
         if (cached != null) return cached;
         List<String> fetched = QuiltInstaller.fetchLoaders(mcVersion);
         QUILT_CACHE.put(mcVersion, fetched);
         return fetched;
+    }
+
+    private static String hostOf(String url) {
+        try { return URI.create(url).getHost(); } catch (Exception e) { return url; }
     }
 }

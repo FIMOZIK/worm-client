@@ -37,7 +37,7 @@
 
 ### Вариант 1 — готовый .exe
 
-1. Скачай последний `WormLauncher-1.0.3.zip` из [Releases](https://github.com/FIMOZIK/worm-client/releases)
+1. Скачай последний `WormLauncher-1.0.7.zip` из [Releases](https://github.com/FIMOZIK/worm-client/releases)
 2. Распакуй в любую папку
 3. Запусти `WormLauncher.exe`
 4. При первом запуске выбери:
@@ -48,7 +48,7 @@
 
 ### Вариант 2 — из jar
 
-java -jar worm-launcher-1.0.4.jar
+java -jar worm-launcher-1.0.7.jar
 Требуется Java 21+.
 
 🗑 Удаление
@@ -74,14 +74,14 @@ cd worm-client
 gradlew.bat build
 
 # результат
-# build/libs/worm-launcher-1.0.4.jar
+# build/libs/worm-launcher-1.0.7.jar
 Требования: JDK 21, Windows 10/11.
 
 Сборка .exe (опционально)
 bash
 cd build/libs
-jpackage --type app-image --name WormLauncher --app-version 1.0.4 ^
-  --input . --main-jar worm-launcher-1.0.4.jar ^
+jpackage --type app-image --name WormLauncher --app-version 1.0.7 ^
+  --input . --main-jar worm-launcher-1.0.7.jar ^
   --main-class launcher.LauncherMain ^
   --java-options "-Dfile.encoding=UTF-8"
 🤝 Вклад

@@ -200,7 +200,4 @@ exe в OneDrive — не работает автообновление (синх
 📜 Лицензия
 MIT — делай что хочешь. см. LICENSE
 
-<div align="center">
 Made by FIMOZIK
-
-</div>

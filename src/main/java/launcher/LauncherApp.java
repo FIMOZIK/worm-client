@@ -42,6 +42,7 @@ import launcher.mc.modpack.ModpackImporter;
 import launcher.ui.CrashCard;
 import launcher.ui.ProfileEditor;
 import launcher.ui.ServersPanel;
+import launcher.ui.ModsPanel;
 import launcher.ui.SkinPreview;
 import thunder.hack.utility.discord.DiscordEventHandlers;
 import thunder.hack.utility.discord.DiscordRPC;
@@ -73,7 +74,7 @@ public class LauncherApp extends Application {
 
     private static final String CLIENT_ID     = "worm-launcher1";
     private static final String CLIENT_SECRET = "YZdFkv0-L5K3aADqedEp0zamy2HzcjBcUApskOHxkzSsxE-XjsuCwdUsAIfVBShk";
-    private static final String LAUNCHER_VERSION = "1.0.9";
+    private static final String LAUNCHER_VERSION = "1.1.0";
 
     private static final String DISCORD_APP_ID = "1564662317663391774";
     private static final String DISCORD_LARGE_IMAGE = "https://i.ibb.co/B2cptB0Y/worm-logo.png";
@@ -123,6 +124,7 @@ public class LauncherApp extends Application {
     private SkinPreview skinPreview;
     private ServersPanel serversPanel;
     private TabPane mainTabs;
+    private ModsPanel modsPanel;
 
     private ImageView bgImageView;
     private MediaView bgMediaView;
@@ -316,6 +318,7 @@ public class LauncherApp extends Application {
 
         skinPreview = new SkinPreview(56);
         serversPanel = new ServersPanel(cfg, this::startGameOnServer);
+        modsPanel = new ModsPanel(cfg);
 
         setupTray();
         applySavedWindowMode();
@@ -831,6 +834,8 @@ public class LauncherApp extends Application {
         loaderBox.setValue(loader);
         pendingLoaderVersion = p.loaderVersion;
         logLine("→ profile applied: " + p.name);
+
+        if (modsPanel != null) modsPanel.setProfile(p);
     }
 
     private void saveCurrentProfile() {
@@ -1039,7 +1044,9 @@ public class LauncherApp extends Application {
                 logTab.setClosable(false);
                 Tab serversTab = new Tab("Серверы", serversPanel);
                 serversTab.setClosable(false);
-                mainTabs = new TabPane(logTab, serversTab);
+                Tab modsTab = new Tab("Моды", modsPanel);
+                modsTab.setClosable(false);
+                mainTabs = new TabPane(logTab, serversTab, modsTab);
                 VBox.setVgrow(mainTabs, Priority.ALWAYS);
                 right.getChildren().add(mainTabs);
             }
@@ -1076,7 +1083,9 @@ public class LauncherApp extends Application {
                 logTab.setClosable(false);
                 Tab serversTab = new Tab("Серверы", serversPanel);
                 serversTab.setClosable(false);
-                mainTabs = new TabPane(logTab, serversTab);
+                Tab modsTab = new Tab("Моды", modsPanel);
+                modsTab.setClosable(false);
+                mainTabs = new TabPane(logTab, serversTab, modsTab);
                 VBox.setVgrow(mainTabs, Priority.ALWAYS);
                 contentHolder.getChildren().add(mainTabs);
             }

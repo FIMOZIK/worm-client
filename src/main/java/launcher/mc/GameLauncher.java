@@ -14,7 +14,7 @@ import java.util.zip.ZipInputStream;
 public class GameLauncher {
 
     private static final String AUTH_SERVER = "https://account.ely.by/api/authlib-injector";
-    private static final String LAUNCHER_VERSION = "1.0.9";
+    private static final String LAUNCHER_VERSION = "1.1.0";
     private static final int DEFAULT_MEMORY_MB = 4096;
 
     public record LaunchOptions(Integer memoryMb, List<String> extraJvmArgs,

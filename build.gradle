@@ -6,7 +6,7 @@ plugins {
 }
 
 group = 'launcher'
-version = '1.0.9'
+version = '1.1.0'
 
 java {
     toolchain {
@@ -47,7 +47,7 @@ run {
 shadowJar {
     archiveBaseName.set('worm-launcher')
     archiveClassifier.set('')
-    archiveVersion.set('1.0.9')
+    archiveVersion.set('1.1.0')
     
     mergeServiceFiles()
 
